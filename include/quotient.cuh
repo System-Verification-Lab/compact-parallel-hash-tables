@@ -26,12 +26,12 @@ static_assert(sizeof(hash_constants) / sizeof(hash_constants[0]) >= n_hash_funct
 // The hash function from BGHT
 // Hashes to the domain [0, 2^m), where m = min(2^addr_width, large_prime)
 template <uint32_t a, uint32_t b, uint32_t target_width>
-__host__ __device__ inline uint32_t hash_base(uint32_t x) {
-	return (static_cast<uint64_t>(a) * x + b) % large_prime % (1ul << target_width);
+__host__ __device__ inline uint32_t hash_base(const key_type x) {
+	return (a * x + b) % large_prime % (1ul << target_width);
 }
 
 template <uint32_t target_width, uint8_t index>
-__host__ __device__ inline uint32_t hash(uint32_t x) {
+__host__ __device__ inline uint32_t hash(const key_type x) {
 	constexpr auto a = hash_constants[index].first;
 	constexpr auto b = hash_constants[index].second;
 	return hash_base<a, b, target_width>(x);
@@ -50,7 +50,7 @@ __host__ __device__ inline AddRem<rem_type> split(const key_type k) {
 template <typename rem_type, uint8_t addr_width, uint8_t index>
 __host__ __device__ inline AddRem<rem_type> permute(AddRem<rem_type> in) {
 	return {
-		in.first ^ hash<addr_width, index>(in.second & ((1ull << addr_width) - 1)),
+		in.first ^ hash<addr_width, index>(in.second),
 		in.second
 	};
 }
