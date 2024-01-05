@@ -6,12 +6,12 @@ project(
 	'compact-parallel-hash-tables',
 	'cpp', 'cuda',
 	default_options: [
-		'cpp_std=c++14',
+		'cpp_std=c++20',
 		'werror=true',
 	],
 )
 
-add_project_arguments('--std=c++14', language: 'cuda')
+add_project_arguments('--std=c++20', language: 'cuda')
 # We only need this because std::make_pair is constexpr in C++14...
 add_project_arguments('--expt-relaxed-constexpr', language: 'cuda')
 

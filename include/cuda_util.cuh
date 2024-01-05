@@ -9,4 +9,4 @@ void cuda_assert(cudaError_t code, const char *file, const int line) {
 	std::exit(1);
 }
 
-#define cuda(check) cuda_assert((check), __FILE__, __LINE__)
+#define CUDA(check) cuda_assert((check), __FILE__, __LINE__)
