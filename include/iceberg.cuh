@@ -125,16 +125,12 @@ public:
 			auto v = p_rows[rid];
 			if (tile.any(v == r0)) return FOUND;
 
-			printf("once\n");
-
 			const auto load = __popc(tile.ballot(v != 0));
 			if (load == p_bucket_size) break; // to secondary
 
 			if (rank == load) v = atomicCAS(p_rows + a0 * p_bucket_size + load, p_row_type(0), r0);
 			if (tile.shfl(v, load) == 0) return PUT;
 		}
-
-		printf("never\n");
 
 		// Secondary level
 		// We divide the tile in two subgroups, inspecting one secondary bucket each
@@ -173,8 +169,8 @@ public:
 	__device__ void find_or_put(const key_type *start, const key_type *end, Result *results) {
 		const auto index = blockIdx.x * blockDim.x + threadIdx.x;
 		const auto stride = gridDim.x * blockDim.x;
-		// round to p_bucket_size groups (using integer division)
 		const auto len = end - start;
+		// round to p_bucket_size groups (using integer division)
 		const auto max = ((len + p_bucket_size - 1) / p_bucket_size) * p_bucket_size;
 
 		for (auto i = index; i < max; i += stride) {
@@ -187,12 +183,11 @@ public:
 			const auto tile = cg::tiled_partition<p_bucket_size>(thb);
 			const auto rank = tile.thread_rank();
 			while (auto queue = tile.ballot(to_act)) {
-				const auto leader = __ffs(queue);
+				const auto leader = __ffs(queue) - 1;
 				const auto res = coop_find_or_put(tile.shfl(k, leader), tile);
 				if (rank == leader) {
 					results[i] = res;
 					to_act = false;
-					printf("done %d\n", i);
 				}
 			}
 		}
@@ -233,7 +228,10 @@ __global__ void find_or_put(Table *table, const key_type *start, const key_type 
 
 #ifdef DOCTEST_LIBRARY_INCLUDED
 TEST_CASE("Iceberg hash table") {
-	using u16 = unsigned short int; // TODO 16 bit width only on high CC
+	// TODO: allow to swap out the permute function via template argument,
+	// so that we can properly test level 2 behavior (generate conflicts).
+
+	// TODO 16 bit width only on high CC
 	using Table = Iceberg<21, uint32_t, 32, uint32_t, 16>;
 	Table *table;
 	CUDA(cudaMallocManaged(&table, sizeof(*table)));
@@ -248,14 +246,12 @@ TEST_CASE("Iceberg hash table") {
 	CUDA(cudaMallocManaged(&results, sizeof(*results) * n));
 	thrust::fill(thrust::device, keys, keys + n, 0);
 	find_or_put<<<2, 512>>>(table, keys, keys + n, results);
-	CUDA(cudaDeviceSynchronize());
-	printf("syncd\n");
+	CHECK(!cudaDeviceSynchronize());
 
+	CHECK(table->count(0) == 1);
 	CHECK(thrust::count(results, results + n, Result::PUT) == 1);
 	CHECK(thrust::count(results, results + n, Result::FOUND) == n - 1);
-	CHECK(table->count(0) == 0);
 
-	CUDA(cudaFree(table));
-	CHECK(true); // survived destruction
+	CHECK(!cudaFree(table));
 }
 #endif
