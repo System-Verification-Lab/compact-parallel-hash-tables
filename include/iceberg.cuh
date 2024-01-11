@@ -287,38 +287,45 @@ struct Permute {
 	}
 };
 
-TEST_CASE("Iceberg hash table: level 2") {
+TEST_CASE("Iceberg hash table: level 2 find-or-put") {
 	using Table = Iceberg<21, uint32_t, 4, uint32_t, 2, Permute>;
 	Table *table;
 	CHECK(!cudaMallocManaged(&table, sizeof(*table)));
 	new (table) Table(0, 1); // one primary bucket, two secondary
 
+	// We'll work with keys [0, 8], of which [0, 7] will just fit and 8 will not
+	// To test for potential race problems, we insert each key many times
+	const auto last_val = 9;
+	const auto dups = 10;
+	const auto N = last_val * dups;
 	key_type *keys;
 	Result *results;
-	CUDA(cudaMallocManaged(&keys, sizeof(*keys) * 9));
-	CUDA(cudaMallocManaged(&results, sizeof(*results) * 9));
-	for (auto i = 0; i < 9; i++) keys[i] = i;
+	CUDA(cudaMallocManaged(&keys, sizeof(*keys) * N));
+	CUDA(cudaMallocManaged(&results, sizeof(*results) * N));
 
-	find_or_put<<<1, 64>>>(table, keys, keys + 4, results);
+	// The first dups keys will be 0, the next dups keys 1, etc.
+	for (auto i = 0; i < N; i++) keys[i] = i / dups;
+
+	// Fill the primary bucket with [0, 3]
+	find_or_put<<<2, 64>>>(table, keys, keys + 4 * dups, results);
 	CHECK(!cudaDeviceSynchronize());
 	for (auto i = 0; i < 4; i++) CHECK(table->count(i) == 1);
-	for (auto i = 4; i < 8; i++) CHECK(table->count(i) == 0);
-	CHECK(thrust::count(results, results + 4, Result::PUT) == 4);
+	for (auto i = 4; i < 9; i++) CHECK(table->count(i) == 0);
+	CHECK(thrust::count(results, results + 4 * dups, Result::PUT) == 4);
+	CHECK(thrust::count(results, results + 4 * dups, Result::FOUND) == 4 * (dups - 1));
 
-	find_or_put<<<1, 64>>>(table, keys, keys + 4, results);
+	// Now we fill both secondary buckets with [4, 7]
+	find_or_put<<<2, 64>>>(table, keys, keys + 8 * dups, results);
 	CHECK(!cudaDeviceSynchronize());
-	CHECK(thrust::count(results, results + 4, Result::FOUND) == 4);
-
-	find_or_put<<<1, 64>>>(table, keys, keys + 8, results);
-	CHECK(!cudaDeviceSynchronize());
-	CHECK(thrust::count(results, results + 8, Result::FOUND) == 4);
-	CHECK(thrust::count(results, results + 8, Result::PUT) == 4);
+	CHECK(thrust::count(results, results + 8 * dups, Result::PUT) == 4);
+	CHECK(thrust::count(results, results + 8 * dups, Result::FULL) == 0);
 	for (auto i = 0; i < 8; i++) CHECK(table->count(i) == 1);
 
-	find_or_put<<<1, 64>>>(table, keys, keys + 9, results);
+	// All buckets are full, so number 8 cannot be added
+	find_or_put<<<2, 64>>>(table, keys, keys + 9 * dups, results);
 	CHECK(!cudaDeviceSynchronize());
-	CHECK(thrust::count(results, results + 8, Result::FOUND) == 8);
-	CHECK(results[8] == Result::FULL);
+	CHECK(thrust::count(results, results + 8 * dups, Result::FOUND) == 8 * dups);
+	CHECK(thrust::count(results, results + 9 * dups, Result::FULL) == dups);
 
 	for (auto i = 0; i < 8; i++) CHECK(table->count(i) == 1);
 	CHECK(table->count(8) == 0);
