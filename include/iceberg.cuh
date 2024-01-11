@@ -115,9 +115,9 @@ public:
 		// Secondary
 		const auto [a1, r1] = s_addr_row(1, k);
 		const auto [a2, r2] = s_addr_row(2, k);
-		for (auto bi = 0; bi < p_bucket_size; bi++) {
+		for (auto bi = 0; bi < s_bucket_size; bi++) {
 			if (s_rows[a1 * s_bucket_size + bi] == r1) count++;
-			if (s_rows[a2 * s_bucket_size + bi] == r2) count++;
+			if (a1 != a2 && s_rows[a2 * s_bucket_size + bi] == r2) count++;
 		}
 
 		return count;
@@ -140,12 +140,16 @@ public:
 			const auto load = __popc(tile.ballot(v != 0));
 			if (load == p_bucket_size) break; // to secondary
 
-			if (rank == load) v = atomicCAS(p_rows + a0 * p_bucket_size + load, p_row_type(0), r0);
+			if (rank == load) {
+				v = atomicCAS(p_rows + a0 * p_bucket_size + load, p_row_type(0), r0);
+			}
 			if (tile.shfl(v, load) == 0) return PUT;
 		}
 
 		// Secondary level
 		// We divide the tile in two subgroups, inspecting one secondary bucket each
+		// NOTE: we make the assumption that a thread is in tile rank / (p_bucket_size / 2).
+		// This seems to be the way it works but it's not super well documented.
 		static_assert(s_bucket_size * 2 <= p_bucket_size);
 		const auto subgroup = cg::tiled_partition<p_bucket_size / 2>(tile);
 		const auto hashid = subgroup.meta_group_rank() + 1;
@@ -166,8 +170,8 @@ public:
 			if (load1 == s_bucket_size && load2 == s_bucket_size) return FULL;
 
 			// Insert in least full bucket (when tied, in the second)
-			const auto target = (load1 >= s_bucket_size);
-			const auto leader = target * p_bucket_size / 2;
+			// This is where we use the assumption on partition tiling.
+			const auto leader = (load1 >= load2) * p_bucket_size / 2;
 			if (rank == leader) {
 				v = atomicCAS(s_rows + a1 * s_bucket_size + load, 0, r1);
 			}
@@ -270,5 +274,53 @@ TEST_CASE("Iceberg hash table") {
 	CHECK(thrust::count(results, results + n, Result::FOUND) == n - 1);
 
 	CHECK(!cudaFree(table));
+}
+
+// We test level 2 using a small table
+// with 1 primary bucket of size 4 and two secondary of size 2
+// The permutation ensures that all keys hash to both secondary buckets
+struct Permute {
+	__host__ __device__ static key_type permute(uint8_t hid, key_type k) {
+		if (hid == 0) return k;
+		if (hid == 1) return k;
+		return k ^ 1;
+	}
+};
+
+TEST_CASE("Iceberg hash table: level 2") {
+	using Table = Iceberg<21, uint32_t, 4, uint32_t, 2, Permute>;
+	Table *table;
+	CHECK(!cudaMallocManaged(&table, sizeof(*table)));
+	new (table) Table(0, 1); // one primary bucket, two secondary
+
+	key_type *keys;
+	Result *results;
+	CUDA(cudaMallocManaged(&keys, sizeof(*keys) * 9));
+	CUDA(cudaMallocManaged(&results, sizeof(*results) * 9));
+	for (auto i = 0; i < 9; i++) keys[i] = i;
+
+	find_or_put<<<1, 64>>>(table, keys, keys + 4, results);
+	CHECK(!cudaDeviceSynchronize());
+	for (auto i = 0; i < 4; i++) CHECK(table->count(i) == 1);
+	for (auto i = 4; i < 8; i++) CHECK(table->count(i) == 0);
+	CHECK(thrust::count(results, results + 4, Result::PUT) == 4);
+
+	find_or_put<<<1, 64>>>(table, keys, keys + 4, results);
+	CHECK(!cudaDeviceSynchronize());
+	CHECK(thrust::count(results, results + 4, Result::FOUND) == 4);
+
+	find_or_put<<<1, 64>>>(table, keys, keys + 8, results);
+	CHECK(!cudaDeviceSynchronize());
+	CHECK(thrust::count(results, results + 8, Result::FOUND) == 4);
+	CHECK(thrust::count(results, results + 8, Result::PUT) == 4);
+	for (auto i = 0; i < 8; i++) CHECK(table->count(i) == 1);
+
+	find_or_put<<<1, 64>>>(table, keys, keys + 9, results);
+	CHECK(!cudaDeviceSynchronize());
+	CHECK(thrust::count(results, results + 8, Result::FOUND) == 8);
+	CHECK(results[8] == Result::FULL);
+
+	for (auto i = 0; i < 8; i++) CHECK(table->count(i) == 1);
+	CHECK(table->count(8) == 0);
 }
 #endif
