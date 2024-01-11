@@ -9,16 +9,26 @@
 #include "bits.h"
 #include "cuda_util.cuh"
 #include "quotient.cuh"
+#include "table.cuh"
 
 namespace cg = cooperative_groups;
 
-enum class Result { FOUND, PUT, FULL };
-
 // An Iceberg hash table
+//
+// For storing keys of width key_width (in bits).
+// The primary buckets consist of p_bucket_size rows of type p_row_type.
+// The secondary buckets consist of s_bucket_size rows of type s_row_type.
+// Keys are permuted with Permute::permute(hash_id, key), and inverted with
+// Permute::permute_inv(hash_id, permuted_key).
+//
+// TODO: There is some code duplication between the two levels,
+// which could perhaps be reduced using fancy compile-time abstractions.
+// Could also do with more tests.
 template <
 	uint8_t key_width,
 	typename p_row_type, uint8_t p_bucket_size,
-	typename s_row_type, uint8_t s_bucket_size
+	typename s_row_type, uint8_t s_bucket_size,
+	typename Permute = BasicPermute<key_width>
 >
 class Iceberg {
 	static_assert(p_bucket_size > 0
@@ -43,7 +53,6 @@ public:
 	// secondary state ::= empty | occupied hash_id
 	const uint8_t s_state_width = 2;
 
-	using Permute = BasicPermute<key_width>;
 	using PTile = cg::thread_block_tile<p_bucket_size, cg::thread_block>;
 	using STile = cg::thread_block_tile<s_bucket_size, cg::thread_block>;
 	using PAddrRow = std::pair<addr_type, p_row_type>;
@@ -114,6 +123,9 @@ public:
 		return count;
 	}
 
+	// Cooperatively find-or-put key k
+	//
+	// All threads in the tile must receive the same parameter k
 	__device__ Result coop_find_or_put(const key_type k, PTile tile) {
 		using enum Result;
 		const auto rank = tile.thread_rank();
@@ -195,9 +207,14 @@ public:
 
 	// Construct an Iceberg hash table with 2^primary_addr_width primary buckets
 	// and 2^secondary_addr_width secondary buckets
-	// See Iceberg paper for general recommendations, but suggestion:
-	// - spend most storage budget on primary buckets
-	// - have about 1/8 as many secondary buckets, with about 1/8 the size
+	//
+	// It is very important that buckets fit in a single cache line.
+	//
+	// See Iceberg paper for their recommendations. In particular:
+	// - spend most storage budget on primary buckets (one cache line per bucket)
+	// - have about 1/8 as many secondary buckets, with about 1/8 the bucket size
+	//
+	// Buckets must be aligned to cache lines for efficiency
 	Iceberg(const uint8_t primary_addr_width, const uint8_t secondary_addr_width)
 		: p_addr_width(primary_addr_width)
 		, p_rem_width(key_width - p_addr_width)

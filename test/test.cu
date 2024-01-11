@@ -3,3 +3,4 @@
 #include <doctest.h>
 #include <quotient.cuh>
 #include <cuckoo.cuh>
+#include <iceberg.cuh>

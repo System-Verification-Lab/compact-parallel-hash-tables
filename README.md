@@ -27,4 +27,17 @@ Run
 meson compile -C build --clean
 ```
 to trigger a full rebuild of the tests after modifying the headers.
-This should not be necessary for Meson versions > 1.3.1.
+This should not be necessary for (future) Meson versions > 1.3.1.
+
+## Acknowledgements (TODO: expand)
+
+Non-compact parallel bucketed Cuckoo hashing on the GPU is due to [BGHT][].
+Iceberg hashing is due to [IcebergHT][https://arxiv.org/abs/2210.04068].
+
+Parts of the implementation are inspired by [CompactCuckoo][] and [BGHT][].
+In particular, the cooperative-group based approach from [BGHT][] is used,
+and the default key permutation is (a one-round Feistel function) based on the
+hash family in [BGHT][] for comparison purposes.
+
+[CompactCuckoo]: https://github.com/DaanWoltgens/CompactCuckoo
+[BGHT]: https://github.com/owensgroup/BGHT
