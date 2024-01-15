@@ -2,7 +2,6 @@
 
 #include <cooperative_groups.h>
 #include <thrust/execution_policy.h>
-#include <thrust/count.h>
 #include <thrust/fill.h>
 #include <bit>
 #include <utility>
@@ -12,6 +11,11 @@
 #include "table.cuh"
 
 namespace cg = cooperative_groups;
+
+template <typename Table>
+__global__ void find_or_put(Table *table, const key_type *start, const key_type *end, Result *results) {
+	table->_find_or_put(start, end, results);
+}
 
 // An Iceberg hash table
 //
@@ -182,7 +186,7 @@ public:
 	// Find-or-put keys between start (inclusive) and end (exclusive)
 	//
 	// Assumes a 1d thread layout, and that p_bucket_size divides blockDim.x
-	__device__ void find_or_put(const key_type *start, const key_type *end, Result *results) {
+	__device__ void _find_or_put(const key_type *start, const key_type *end, Result *results) {
 		const auto index = blockIdx.x * blockDim.x + threadIdx.x;
 		const auto stride = gridDim.x * blockDim.x;
 		const auto len = end - start;
@@ -207,6 +211,18 @@ public:
 				}
 			}
 		}
+	}
+
+	// Find-or-put keys between start (inclusive) and end (exclusive)
+	// If sync is true (by default, it is), a cuda device synchronization is performed
+	//
+	// To control thread layout, use the find_or_put kernel directly
+	void find_or_put(const key_type *start, const key_type *end, Result *results, bool sync = true) {
+		constexpr int block_size = 128;
+		static_assert(block_size % p_bucket_size == 0);
+		const int n_blocks = ((end - start) + block_size - 1) / block_size;
+		::find_or_put<<<n_blocks, block_size>>>(this, start, end, results);
+		if (sync) CUDA(cudaDeviceSynchronize());
 	}
 
 	// Construct an Iceberg hash table with 2^primary_addr_width primary buckets
@@ -242,12 +258,11 @@ public:
 	}
 };
 
-template <typename Table>
-__global__ void find_or_put(Table *table, const key_type *start, const key_type *end, Result *results) {
-	table->find_or_put(start, end, results);
-}
-
 #ifdef DOCTEST_LIBRARY_INCLUDED
+#include <thrust/count.h>
+#include <thrust/logical.h>
+#include <thrust/sequence.h>
+
 TEST_CASE("Iceberg hash table") {
 	// TODO: allow to swap out the permute function via template argument,
 	// so that we can properly test level 2 behavior (generate conflicts).
@@ -274,6 +289,26 @@ TEST_CASE("Iceberg hash table") {
 	CHECK(thrust::count(results, results + n, Result::FOUND) == n - 1);
 
 	CHECK(!cudaFree(table));
+}
+
+TEST_CASE("Iceberg convenience find_or_put member function") {
+	constexpr auto n = 1000;
+	key_type *keys;
+	Result *results;
+	CUDA(cudaMallocManaged(&keys, sizeof(*keys) * n));
+	CUDA(cudaMallocManaged(&results, sizeof(*results) * n));
+	thrust::sequence(keys, keys + n);
+
+	using Table = Iceberg<21, uint32_t, 32, uint32_t, 16>;
+	Table *table;
+	CUDA(cudaMallocManaged(&table, sizeof(*table)));
+	new (table) Table(5, 3);
+
+	table->find_or_put(keys, keys + n, results);
+	CHECK(thrust::all_of(keys, keys + n,
+		[table, results] (auto key) {
+			return table->count(key) == 1 && results[key] == Result::PUT;
+		}));
 }
 
 // We test level 2 using a small table
@@ -330,4 +365,5 @@ TEST_CASE("Iceberg hash table: level 2 find-or-put") {
 	for (auto i = 0; i < 8; i++) CHECK(table->count(i) == 1);
 	CHECK(table->count(8) == 0);
 }
+
 #endif
