@@ -12,11 +12,6 @@
 
 namespace cg = cooperative_groups;
 
-template <typename Table>
-__global__ void find_or_put(Table *table, const key_type *start, const key_type *end, Result *results) {
-	table->_find_or_put(start, end, results);
-}
-
 // An Iceberg hash table
 //
 // For storing keys of width key_width (in bits).
@@ -221,7 +216,7 @@ public:
 		constexpr int block_size = 128;
 		static_assert(block_size % p_bucket_size == 0);
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
-		::find_or_put<<<n_blocks, block_size>>>(this, start, end, results);
+		kh::find_or_put<<<n_blocks, block_size>>>(this, start, end, results);
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
 
@@ -246,8 +241,8 @@ public:
 		// make sure row_type is wide enough
 		assert(sizeof(p_row_type) * 8 >= p_state_width + p_rem_width);
 		assert(sizeof(s_row_type) * 8 >= s_state_width + s_rem_width);
-		CUDA(cudaMallocManaged(&p_rows, p_n_rows));
-		CUDA(cudaMallocManaged(&s_rows, s_n_rows));
+		CUDA(cudaMallocManaged(&p_rows, p_n_rows * sizeof(p_row_type)));
+		CUDA(cudaMallocManaged(&s_rows, s_n_rows * sizeof(s_row_type)));
 		thrust::fill(thrust::device, p_rows, p_rows + p_n_rows, 0);
 		thrust::fill(thrust::device, s_rows, s_rows + s_n_rows, 0);
 	}
@@ -262,6 +257,8 @@ public:
 #include <thrust/count.h>
 #include <thrust/logical.h>
 #include <thrust/sequence.h>
+
+using namespace kh;
 
 TEST_CASE("Iceberg hash table") {
 	// TODO: allow to swap out the permute function via template argument,
