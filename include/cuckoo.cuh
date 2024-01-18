@@ -3,6 +3,9 @@
 #include <cooperative_groups.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
+#include <thrust/iterator/permutation_iterator.h>
+#include <thrust/sequence.h>
+#include <thrust/sort.h>
 #include <bit>
 #include <functional>
 #include <utility>
@@ -28,6 +31,8 @@ class Cuckoo {
 public:
 	// TODO: make this configurable? In BCHT this depends on n_rows
 	static const auto max_chain_length = 5 * n_hash_functions;
+	static constexpr int block_size = 128;
+	static_assert(block_size % bucket_size == 0);
 
 	const uint8_t row_width = sizeof(row_type) * 8;
 	const uint8_t addr_width, rem_width; // in bits
@@ -99,7 +104,42 @@ public:
 				const auto leader = __ffs(queue) - 1;
 				const auto res = std::invoke(F, this,
 						tile.shfl(k, leader), tile);
-				//const auto res = this->*F(tile.shfl(k, leader), tile);
+				if (rank == leader) {
+					results[i] = res;
+					to_act = false;
+				}
+			}
+		}
+	}
+
+	// Divide work between tiled threads. Only act on the first of every similar block
+	//
+	// F(key, tile) is called for every first unique key start[i] from
+	// start to end (exclusive) by one Tile. The associated return value is
+	// stored in results[i].
+	//
+	// Assumes keys are sorted.
+	template <auto F, class KeyIt, class ResIt>
+	__device__ void coop_sorted(const KeyIt start, const KeyIt end, ResIt results) {
+		const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+		const auto stride = gridDim.x * blockDim.x;
+		const auto len = end - start;
+		const auto max = ((len + bucket_size - 1) / bucket_size) * bucket_size;
+
+		for (auto i = index; i < max; i += stride) {
+			key_type k;
+			const bool in_range = i < len;
+			if (in_range) k = start[i];
+			const bool first = in_range && (index == 0 || k != start[i - 1]);
+			bool to_act = in_range && first;
+
+			const auto thb = cg::this_thread_block();
+			const auto tile = cg::tiled_partition<bucket_size>(thb);
+			const auto rank = tile.thread_rank();
+			while (auto queue = tile.ballot(to_act)) {
+				const auto leader = __ffs(queue) - 1;
+				const auto res = std::invoke(F, this,
+						tile.shfl(k, leader), tile);
 				if (rank == leader) {
 					results[i] = res;
 					to_act = false;
@@ -137,8 +177,6 @@ public:
 
 	// Attempt to find given keys in the table
 	void find(const key_type *start, const key_type *end, bool *results, bool sync = true) {
-		constexpr int block_size = 128;
-		static_assert(block_size % bucket_size == 0);
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
 		// calls _find
 		kh::find<<<n_blocks, block_size>>>(this, start, end, results);
@@ -197,33 +235,109 @@ public:
 
 	// Attempt to put given keys in the table
 	void put(const key_type *start, const key_type *end, Result *results, bool sync = true) {
-		constexpr int block_size = 128;
-		static_assert(block_size % bucket_size == 0);
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
 		// calls _put
 		kh::put<<<n_blocks, block_size>>>(this, start, end, results);
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
 
-	// A safe find-or-put for Cuckoo
+	// Translate coop_find to Result, so that true is FOUND and false is PUT
 	//
-	// Slow because it has to allocate memory
-	void find_or_put(const key_type *start, const key_type *end, Result *results, bool sync = true) {
+	// (Used in find_or_put for saving memory)
+	__device__ Result coop_find_as_result(const key_type k, const Tile t) {
+		using enum Result;
+		return coop_find(k, t) ? FOUND : PUT;
+	}
+
+	// If results[i] != FOUND, put start[i] into the table
+	//
+	// Only the first copy of every such key is inserted. All other keys
+	// have their result set as FOUND, _even if their insertion failed!_
+	// (For performance reasons.) TODO: is this fair?
+	template <class KeyIt, class ResIt>
+	__device__ void put_if_not_found_sorted(const KeyIt start, const KeyIt end, ResIt results) {
+		const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+		const auto stride = gridDim.x * blockDim.x;
 		const auto len = end - start;
+		const auto max = ((len + bucket_size - 1) / bucket_size) * bucket_size;
 
-		// Deduplicate
-		key_type *keys;
-		CUDA(cudaMallocManaged(&keys, len * sizeof(*keys)));
-		// TODO:
-		// - use thrust::copy_if, followed by thrust::sort, followed by thrust::unique
+		for (auto i = index; i < max; i += stride) {
+			key_type k;
+			const bool in_range = i < len;
+			if (in_range) k = start[i];
+			const bool first = in_range && (index == 0 || k != start[i - 1]);
 
-		// TODO: We could repurpose the results array for this
-		// (by writing a kernel taking Result* instead of bool*, let's not invoke UB)
-		bool *found;
-		CUDA(cudaMallocManaged(&found, len * sizeof(*found)));
-		find(start, end, found);
+			bool to_act = in_range && first && results[i] != Result::FOUND;
+			const auto thb = cg::this_thread_block();
+			const auto tile = cg::tiled_partition<bucket_size>(thb);
+			const auto rank = tile.thread_rank();
+			while (auto queue = tile.ballot(to_act)) {
+				const auto leader = __ffs(queue) - 1;
+				const auto res = coop_put(tile.shfl(k, leader), tile);
+				if (rank == leader) {
+					results[i] = res;
+					to_act = false;
+				}
+			}
+
+			if (in_range && !first) results[i] = Result::FOUND;
+		}
+	}
+
+	// Find-or-put keys, assuming keys is sorted
+	//
+	// For every first key of its kind, the result is:
+	// - FOUND if it was already in the table
+	// - PUT if it was not already in the table, and has been put in
+	// - FULL if it was not already in the table, and could not be put in
+	// The results of all other keys is always FOUND (even if it was not inserted!)
+	template <class KeyIt, class ResIt>
+	void find_or_put_sorted(const KeyIt keys, const KeyIt end, ResIt results, bool sync = true) {
+		const auto len = end - keys;
+		const int n_blocks = (len + block_size - 1) / block_size;
+
+		invoke_device<&Cuckoo::coop_sorted<&Cuckoo::coop_find_as_result, KeyIt, ResIt>>
+			<<<n_blocks, block_size>>>(this, keys, keys + len, results);
+
+		invoke_device<&Cuckoo::put_if_not_found_sorted<KeyIt, ResIt>>
+			<<<n_blocks, block_size>>>(this, keys, keys + len, results);
 
 		if (sync) CUDA(cudaDeviceSynchronize());
+	}
+
+	// A safe find-or-put for Cuckoo
+	//
+	// tmp should point to a device buffer twice the size of supplied keys
+	//
+	// For every first key of its kind, the result is:
+	// - FOUND if it was already in the table
+	// - PUT if it was not already in the table, and has been put in
+	// - FULL if it was not already in the table, and could not be put in
+	// The results of all other keys is always FOUND (even if it was not inserted!)
+	//
+	// Perhaps this could be made more efficient, especially in terms of
+	// memory usage. By taking tmp as an argument, the cost of allocating
+	// it is not measured in benchmarks at least.
+	//
+	// TODO: we currently need key_type to be able to store end - keys!
+	// (see tmp)
+	void find_or_put(const key_type *keys, const key_type *end, key_type *tmp, Result *results, bool sync = true) {
+		const auto klen = end - keys;
+		auto indices = tmp;
+		auto kcopies = tmp + klen;
+
+		// Sort the keys, remembering their index
+		// (so that kcopies[i] < kcopies[i+1] and keys[indices[j]] = kcopies[j])
+		// TODO: would be nicer if we could just sort the indices
+		thrust::copy(thrust::device, keys, end, kcopies);
+		thrust::sequence(thrust::device, indices, indices + klen);
+		thrust::stable_sort_by_key(thrust::device, kcopies, kcopies + klen, indices);
+
+		// Low-overhead view into sorted array
+		auto key_view = thrust::permutation_iterator(keys, indices);
+		auto res_view = thrust::permutation_iterator(results, indices);
+
+		find_or_put_sorted(key_view, key_view + klen, res_view, sync);
 	}
 
 	// Construct a Cuckoo hash table with 2^addr_width buckets
@@ -245,8 +359,12 @@ public:
 };
 
 #ifdef DOCTEST_LIBRARY_INCLUDED
+#include <thrust/count.h>
 #include <thrust/functional.h>
+#include <thrust/iterator/counting_iterator.h>
 #include <thrust/logical.h>
+#include <thrust/random/linear_congruential_engine.h>
+#include <thrust/random/uniform_int_distribution.h>
 #include <thrust/sequence.h>
 
 TEST_CASE("Cuckoo hash table") {
@@ -292,14 +410,14 @@ TEST_CASE("Cuckoo hash table") {
 	CHECK(true); // survived destruction
 }
 
-TEST_CASE("Cuckoo: find-or-put") {
+TEST_CASE("Cuckoo: sorted find-or-put") {
 	using Table = Cuckoo<21, uint32_t, 32>;
 	Table *table;
 	CUDA(cudaMallocManaged(&table, sizeof(*table)));
 	new (table) Table(5); // 32 * 2^5 = 1024 rows
 
-	constexpr auto N = 900;
-	constexpr auto step = 100;
+	constexpr auto N = 300;
+	constexpr auto step = 30;
 	static_assert(N % step == 0);
 
 	key_type *keys;
@@ -309,7 +427,7 @@ TEST_CASE("Cuckoo: find-or-put") {
 	thrust::sequence(keys, keys + N);
 
 	for (auto n = 0; n < N; n += step) {
-		table->find_or_put(keys, keys + n + step, results);
+		table->find_or_put_sorted(keys, keys + n + step, results);
 		CHECK(thrust::all_of(keys, keys + n,
 			[table, results] (auto key) {
 				return table->count(key) == 1 && results[key] == Result::FOUND;
@@ -323,6 +441,43 @@ TEST_CASE("Cuckoo: find-or-put") {
 				return table->count(key) == 0;
 			}));
 	}
+}
+
+TEST_CASE("Cuckoo: unordered find-or-put") {
+	using Table = Cuckoo<21, uint32_t, 32>;
+	Table *table;
+	CUDA(cudaMallocManaged(&table, sizeof(*table)));
+	new (table) Table(5); // 32 * 2^5 = 1024 rows
+
+	constexpr auto M = 1025;
+	constexpr auto N = 800;
+	constexpr auto step = 200;
+	static_assert(N % step == 0);
+
+	key_type *keys;
+	Result *results;
+	key_type *tmp;
+	CUDA(cudaMallocManaged(&keys, sizeof(*keys) * M));
+	CUDA(cudaMallocManaged(&results, sizeof(*results) * M));
+	CUDA(cudaMallocManaged(&tmp, sizeof(*tmp) * M * 2));
+
+	thrust::minstd_rand rng; // has constant seed
+	thrust::uniform_int_distribution<int> dist(0, 100);
+	auto gen = [&rng, &dist] () { return dist(rng); };
+	thrust::generate(keys, keys + N, gen);
+
+	for (auto n = 0; n < N; n += step) {
+		table->find_or_put(keys, keys + n + step, tmp, results);
+		CHECK(thrust::all_of(results, results + n,
+			[] (auto res) { return res == Result::FOUND; }));
+	}
+	CHECK(thrust::all_of(keys, keys + N,
+		[table] (auto k) { return table->count(k) == 1; }));
+
+	// Now overflow the table
+	thrust::sequence(keys, keys + M);
+	table->find_or_put(keys, keys + M, tmp, results);
+	CHECK(thrust::count(results, results + M, Result::FULL) > 0);
 }
 
 TEST_CASE("Cuckoo hash table: Cuckooing behavior") {
