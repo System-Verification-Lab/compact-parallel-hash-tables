@@ -7,6 +7,7 @@
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
 #include <bit>
+#include <limits>
 #include <functional>
 #include <utility>
 #include "bits.h"
@@ -307,7 +308,7 @@ public:
 
 	// A safe find-or-put for Cuckoo
 	//
-	// tmp should point to a device buffer twice the size of supplied keys
+	// tmp should point to a device buffer twice the size of supplied keys*
 	//
 	// For every first key of its kind, the result is:
 	// - FOUND if it was already in the table
@@ -315,20 +316,29 @@ public:
 	// - FULL if it was not already in the table, and could not be put in
 	// The results of all other keys is always FOUND (even if it was not inserted!)
 	//
+	// * The length of the keys array should also be expressible in key_type
+	//   (this assumption could be removed, see implementation)
+	//
 	// Perhaps this could be made more efficient, especially in terms of
 	// memory usage. By taking tmp as an argument, the cost of allocating
 	// it is not measured in benchmarks at least.
-	//
-	// TODO: we currently need key_type to be able to store end - keys!
-	// (see tmp)
 	void find_or_put(const key_type *keys, const key_type *end, key_type *tmp, Result *results, bool sync = true) {
 		const auto klen = end - keys;
+		// The first constraint can be alleviated by changing buffer requirements (tmp)
+		// The second constraint is due to Thrust (https://github.com/NVIDIA/cccl/issues/744)
+		assert(klen <= std::numeric_limits<key_type>::max());
+		assert(klen <= std::numeric_limits<int>::max());
+
 		auto indices = tmp;
 		auto kcopies = tmp + klen;
 
 		// Sort the keys, remembering their index
 		// (so that kcopies[i] < kcopies[i+1] and keys[indices[j]] = kcopies[j])
-		// TODO: would be nicer if we could just sort the indices
+		// TODO: It would be nicer if we could just sort the indices.
+		// However, I fear that thrust sorting with a custom comparator
+		// will be significantly slower than this, because of memory
+		// locality and because thrust appears to use radix sort for
+		// builtins and mergesort for custom comparators.
 		thrust::copy(thrust::device, keys, end, kcopies);
 		thrust::sequence(thrust::device, indices, indices + klen);
 		thrust::stable_sort_by_key(thrust::device, kcopies, kcopies + klen, indices);
