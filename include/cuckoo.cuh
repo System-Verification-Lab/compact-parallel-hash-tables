@@ -416,6 +416,9 @@ TEST_CASE("Cuckoo hash table") {
 	CHECK(thrust::all_of(found, found + to_insert, thrust::identity<bool>()));
 	CHECK(thrust::none_of(found + to_insert, found + N, thrust::identity<bool>()));
 
+	CUDA(cudaFree(keys));
+	CUDA(cudaFree(results));
+	CUDA(cudaFree(found));
 	CUDA(cudaFree(table));
 	CHECK(true); // survived destruction
 }
@@ -451,6 +454,10 @@ TEST_CASE("Cuckoo: sorted find-or-put") {
 				return table->count(key) == 0;
 			}));
 	}
+
+	CUDA(cudaFree(keys));
+	CUDA(cudaFree(results));
+	CUDA(cudaFree(table));
 }
 
 TEST_CASE("Cuckoo: unordered find-or-put") {
@@ -488,6 +495,11 @@ TEST_CASE("Cuckoo: unordered find-or-put") {
 	thrust::sequence(keys, keys + M);
 	table->find_or_put(keys, keys + M, tmp, results);
 	CHECK(thrust::count(results, results + M, Result::FULL) > 0);
+
+	CUDA(cudaFree(keys));
+	CUDA(cudaFree(results));
+	CUDA(cudaFree(tmp));
+	CUDA(cudaFree(table));
 }
 
 TEST_CASE("Cuckoo hash table: Cuckooing behavior") {

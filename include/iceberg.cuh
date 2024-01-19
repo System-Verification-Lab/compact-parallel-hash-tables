@@ -285,6 +285,8 @@ TEST_CASE("Iceberg hash table") {
 	CHECK(thrust::count(results, results + n, Result::PUT) == 1);
 	CHECK(thrust::count(results, results + n, Result::FOUND) == n - 1);
 
+	CUDA(cudaFree(keys));
+	CUDA(cudaFree(results));
 	CHECK(!cudaFree(table));
 }
 
@@ -306,6 +308,10 @@ TEST_CASE("Iceberg convenience find_or_put member function") {
 		[table, results] (auto key) {
 			return table->count(key) == 1 && results[key] == Result::PUT;
 		}));
+
+	CUDA(cudaFree(keys));
+	CUDA(cudaFree(results));
+	CUDA(cudaFree(table));
 }
 
 // We test level 2 using a small table
@@ -361,6 +367,10 @@ TEST_CASE("Iceberg hash table: level 2 find-or-put") {
 
 	for (auto i = 0; i < 8; i++) CHECK(table->count(i) == 1);
 	CHECK(table->count(8) == 0);
+
+	CUDA(cudaFree(keys));
+	CUDA(cudaFree(results));
+	CUDA(cudaFree(table));
 }
 
 #endif
