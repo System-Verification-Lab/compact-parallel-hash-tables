@@ -220,6 +220,12 @@ public:
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
 
+	// Clears all rows
+	void clear() {
+		thrust::fill(thrust::device, p_rows, p_rows + p_n_rows, 0);
+		thrust::fill(thrust::device, s_rows, s_rows + s_n_rows, 0);
+	}
+
 	// Construct an Iceberg hash table with 2^primary_addr_width primary buckets
 	// and 2^secondary_addr_width secondary buckets
 	//
@@ -243,8 +249,7 @@ public:
 		assert(sizeof(s_row_type) * 8 >= s_state_width + s_rem_width);
 		CUDA(cudaMallocManaged(&p_rows, p_n_rows * sizeof(p_row_type)));
 		CUDA(cudaMallocManaged(&s_rows, s_n_rows * sizeof(s_row_type)));
-		thrust::fill(thrust::device, p_rows, p_rows + p_n_rows, 0);
-		thrust::fill(thrust::device, s_rows, s_rows + s_n_rows, 0);
+		clear();
 	}
 
 	~Iceberg() {

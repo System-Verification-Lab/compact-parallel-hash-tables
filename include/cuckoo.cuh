@@ -350,6 +350,11 @@ public:
 		find_or_put_sorted(key_view, key_view + klen, res_view, sync);
 	}
 
+	// Clears all table rows
+	void clear() {
+		thrust::fill(thrust::device, rows, rows + n_rows, 0);
+	}
+
 	// Construct a Cuckoo hash table with 2^addr_width buckets
 	// addr_width to be specified in bits
 	Cuckoo(const uint8_t addr_width)
@@ -360,7 +365,7 @@ public:
 		// make sure row_type is wide enough
 		assert(sizeof(row_type) * 8 >= state_width + rem_width);
 		CUDA(cudaMallocManaged(&rows, n_rows * sizeof(row_type)));
-		thrust::fill(thrust::device, rows, rows + n_rows, 0);
+		clear();
 	}
 
 	~Cuckoo() {

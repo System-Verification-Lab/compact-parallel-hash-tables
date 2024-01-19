@@ -12,22 +12,22 @@ project(
 )
 
 add_project_arguments('--std=c++20', language: 'cuda')
-# We only need this because std::make_pair is constexpr in C++14...
 add_project_arguments('--expt-relaxed-constexpr', language: 'cuda')
+add_project_arguments('--extended-lambda', language: 'cuda')
 
 subproject('doctest')
 doctest = dependency('doctest')
 
 cpht_inc = include_directories('include')
-cpht_source = []
-cpht = library('cpht',
-	cpht_source,
-	include_directories: cpht_inc,
-	dependencies: [])
 
 tests = executable('tests',
 	'test/test.cu',
 	include_directories: cpht_inc,
 	dependencies: [doctest])
-
 test('tests', tests)
+
+bench = executable('bench',
+	'benchmarks/bench.cu',
+	include_directories: cpht_inc,
+	dependencies: [doctest, argparse])
+benchmark('bench', bench)
