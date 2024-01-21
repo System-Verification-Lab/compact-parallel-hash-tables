@@ -29,5 +29,5 @@ test('tests', tests)
 bench = executable('bench',
 	'benchmarks/bench.cu',
 	include_directories: cpht_inc,
-	dependencies: [doctest, argparse])
+	dependencies: [doctest])
 benchmark('bench', bench)
