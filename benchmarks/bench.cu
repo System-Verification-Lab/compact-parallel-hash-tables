@@ -109,7 +109,6 @@ BenchResult bench_cuckoo(key_type *keys, key_type *keys_end) {
 	for (auto i = 0; i < N_RUNS; i++) {
 		table->clear();
 
-
 		timer.start();
 		for (auto n = 0; n < len; n += len / N_STEPS) {
 			table->find_or_put(keys, keys + n, tmp, results, false);
@@ -126,6 +125,48 @@ BenchResult bench_cuckoo(key_type *keys, key_type *keys_end) {
 	CUDA(cudaFree(table));
 	CUDA(cudaFree(results));
 	CUDA(cudaFree(tmp));
+
+	return { std::accumulate(times_ms + 1, times_ms + N_RUNS, 0.f) / (N_RUNS - 1) };
+};
+
+template <
+	uint8_t key_width,
+	uint8_t p_address_width, uint8_t p_bucket_size, typename p_row_type,
+	uint8_t s_address_width, uint8_t s_bucket_size, typename s_row_type>
+BenchResult bench_iceberg(key_type *keys, key_type *keys_end) {
+	const auto len = keys_end - keys;
+	assert(len % N_STEPS == 0);
+	float times_ms[N_RUNS];
+
+	using Table = Iceberg<key_width,
+		p_row_type, p_bucket_size,
+		s_row_type, s_bucket_size>;
+	Table *table;
+	CUDA(cudaMallocManaged(&table, sizeof(*table)));
+	new (table) Table(p_address_width, s_address_width);
+
+	Result *results;
+	CUDA(cudaMallocManaged(&results, sizeof(*results) * len));
+
+	Timer timer;
+	for (auto i = 0; i < N_RUNS; i++) {
+		table->clear();
+
+		timer.start();
+		for (auto n = 0; n < len; n += len / N_STEPS) {
+			table->find_or_put(keys, keys + n, results, false);
+		}
+		times_ms[i] = timer.stop();
+
+		bool full = thrust::find(results, results + len, Result::FULL) != results + len;
+		if (full) {
+			fprintf(stderr, "bench: table was full! Results are not trustworthy");
+			std::exit(1);
+		}
+	}
+
+	CUDA(cudaFree(table));
+	CUDA(cudaFree(results));
 
 	return { std::accumulate(times_ms + 1, times_ms + N_RUNS, 0.f) / (N_RUNS - 1) };
 };
@@ -149,16 +190,26 @@ int main() {
 	using secondary_row_type = long long unsigned; // 64 bits
 
 	// Read keys (and a bit of warmup)
-	printf("Reading keys from %s... ", data_file.c_str());
+	fprintf(stderr, "Reading keys from %s... ", data_file.c_str());
 	std::ifstream input(data_file);
 	key_type *keys, *keys_end;
 	CUDA(cudaMallocManaged(&keys, sizeof(*keys) * num_keys));
 	keys_end = keys + num_keys;
 	for (size_t i = 0; i < num_keys; i++) input >> keys[i];
 	thrust::all_of(thrust::device, keys, keys_end, thrust::identity<key_type>());
-	printf("done.\n);
+	fprintf(stderr, "done.\n");
 
-	auto cuckoo_result = bench_cuckoo<key_width, cuckoo_address_width, cuckoo_bucket_size, cuckoo_row_type>(keys, keys_end);
-	printf("Cuckoo average...");
+	printf("Cuckoo average..."); fflush(stdout);
+	auto cuckoo_result = bench_cuckoo<key_width, cuckoo_address_width,
+		cuckoo_bucket_size, cuckoo_row_type>(keys, keys_end);
 	printf(" %f ms\n", cuckoo_result.average_ms);
+
+	printf("Iceberg average..."); fflush(stdout);
+	auto iceberg_result = bench_iceberg<key_width,
+		primary_address_width, primary_bucket_size, primary_row_type,
+		secondary_address_width, secondary_bucket_size, secondary_row_type>
+		(keys, keys_end);
+	printf(" %f ms\n", iceberg_result.average_ms);
+
+	CUDA(cudaFree(keys));
 }
