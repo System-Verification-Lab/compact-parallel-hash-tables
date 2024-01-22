@@ -223,7 +223,7 @@ struct Suite {
 		for (auto config : tables) {
 			std::cout << "\t" << config.describe() << ": " << std::flush;
 			auto res = bench_table(config, key_width, keys, keys_end);
-			std::cout << res.average_ms << std::endl;
+			std::cout << res.average_ms << " ms" << std::endl;
 			results.push_back({config, res});
 		}
 
