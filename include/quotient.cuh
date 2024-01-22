@@ -37,9 +37,10 @@ class BasicPermute {
 	}
 
 	// Hashes x to [0, 2^hash_width) -- so long hash_width < 32
-	__host__ __device__ uint32_t hash(const uint8_t index, const key_type x) const {
+	__host__ __device__ inline uint32_t hash(const uint8_t index, const key_type x) const {
 		// This explicit switch is necessary to allow function to be called from device
 		assert(index < n_hash_functions);
+		static_assert(2 == n_hash_functions - 1);
 		switch (index) {
 			case 0: return hash_base<0>(x);
 			case 1: return hash_base<1>(x);
@@ -47,7 +48,6 @@ class BasicPermute {
 			// use std::unreachable() in C++23
 			default: __builtin_unreachable();
 		}
-		static_assert(2 == n_hash_functions - 1);
 	}
 
 public:
