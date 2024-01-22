@@ -6,5 +6,5 @@ MIN = 0
 MAX = 2**45-1
 
 rng = np.random.default_rng(SEED)
-keys = rng.integers(0, MAX + 1, 20_000_000)
-np.savetxt(sys.stdout, keys, fmt="%d")
+keys = rng.integers(0, MAX + 1, 20_000_000, dtype=np.uint64)
+keys.tofile(sys.stdout)

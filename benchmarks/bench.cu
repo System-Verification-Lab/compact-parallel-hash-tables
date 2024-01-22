@@ -172,7 +172,7 @@ BenchResult bench_iceberg(key_type *keys, key_type *keys_end) {
 };
 
 int main() {
-	const std::string data_file = "benchmarks/data/1";
+	const std::string data_file = "benchmarks/data/1.bin";
 	const size_t num_keys = 20'000'000;
 	const uint8_t key_width = 45;
 
@@ -190,12 +190,16 @@ int main() {
 	using secondary_row_type = long long unsigned; // 64 bits
 
 	// Read keys (and a bit of warmup)
+	// Assumes the file contains a binary dump of a key_type array
 	fprintf(stderr, "Reading keys from %s... ", data_file.c_str());
-	std::ifstream input(data_file);
+	std::ifstream input(data_file, std::ios::in | std::ios::binary);
 	key_type *keys, *keys_end;
 	CUDA(cudaMallocManaged(&keys, sizeof(*keys) * num_keys));
 	keys_end = keys + num_keys;
-	for (size_t i = 0; i < num_keys; i++) input >> keys[i];
+	if (!input.read((char*)keys, num_keys * sizeof(*keys))) {
+		fprintf(stderr, "failed\n");
+		std::exit(1);
+	}
 	thrust::all_of(thrust::device, keys, keys_end, thrust::identity<key_type>());
 	fprintf(stderr, "done.\n");
 
