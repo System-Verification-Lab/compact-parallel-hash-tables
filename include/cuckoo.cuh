@@ -19,10 +19,9 @@ namespace cg = cooperative_groups;
 
 // A Cuckoo hash table 
 template <
-	uint8_t key_width,
 	typename row_type,
 	uint8_t bucket_size,
-	class Permute = BasicPermute<key_width>,
+	class Permute = BasicPermute,
 	uint8_t n_hash_functions = 3
 >
 class Cuckoo {
@@ -34,6 +33,8 @@ public:
 	static const auto max_chain_length = 5 * n_hash_functions;
 	static constexpr int block_size = 128;
 	static_assert(block_size % bucket_size == 0);
+
+	const Permute permute;
 
 	const uint8_t row_width = sizeof(row_type) * 8;
 	const uint8_t addr_width, rem_width; // in bits
@@ -55,7 +56,7 @@ public:
 
 	// Hash key to an address and a row entry
 	__host__ __device__ AddrRow addr_row(const uint8_t hash_id, const key_type k) {
-		const auto pk = Permute::permute(hash_id, k);
+		const auto pk = permute(hash_id, k);
 		const addr_type addr = pk & mask<key_type>(addr_width);
 		const auto rem = pk >> addr_width;
 		return { addr, ((hash_id + 1) << (row_width - state_width)) | rem };
@@ -67,7 +68,7 @@ public:
 		const auto hash_id = (row >> (row_width - state_width)) - 1;
 		const auto rem = row & mask<row_type>(rem_width);
 		const auto pk = (rem << addr_width) | addr;
-		return { hash_id, Permute::permute_inv(hash_id, pk) };
+		return { hash_id, permute.inv(hash_id, pk) };
 	}
 
 	// Count the number of occurrences of key k in the table
@@ -355,10 +356,13 @@ public:
 		thrust::fill(thrust::device, rows, rows + n_rows, 0);
 	}
 
-	// Construct a Cuckoo hash table with 2^addr_width buckets
-	// addr_width to be specified in bits
-	Cuckoo(const uint8_t addr_width)
-		: addr_width(addr_width)
+	// Construct a Cuckoo hash table with 2^addr_width buckets for storing
+	// keys key_width wide.
+	//
+	// key_width and addr_width to be specified in bits
+	Cuckoo(const uint8_t key_width, const uint8_t addr_width)
+		: permute(key_width)
+		, addr_width(addr_width)
 		, rem_width(key_width - addr_width)
 		, n_rows((1ull << addr_width) * sizeof(*rows) * bucket_size)
 	{
@@ -383,10 +387,10 @@ public:
 #include <thrust/sequence.h>
 
 TEST_CASE("Cuckoo hash table") {
-	using Table = Cuckoo<21, uint32_t, 32>;
+	using Table = Cuckoo<uint32_t, 32>;
 	Table *table;
 	CUDA(cudaMallocManaged(&table, sizeof(*table)));
-	new (table) Table(5); // 32 * 2^5 = 1024 rows
+	new (table) Table(21, 5); // 32 * 2^5 = 1024 rows
 
 	CHECK(table->count(0) == 0);
 
@@ -429,10 +433,10 @@ TEST_CASE("Cuckoo hash table") {
 }
 
 TEST_CASE("Cuckoo: sorted find-or-put") {
-	using Table = Cuckoo<21, uint32_t, 32>;
+	using Table = Cuckoo<uint32_t, 32>;
 	Table *table;
 	CUDA(cudaMallocManaged(&table, sizeof(*table)));
-	new (table) Table(5); // 32 * 2^5 = 1024 rows
+	new (table) Table(21, 5); // 32 * 2^5 = 1024 rows
 
 	constexpr auto N = 300;
 	constexpr auto step = 30;
@@ -466,10 +470,10 @@ TEST_CASE("Cuckoo: sorted find-or-put") {
 }
 
 TEST_CASE("Cuckoo: unordered find-or-put") {
-	using Table = Cuckoo<21, uint32_t, 32>;
+	using Table = Cuckoo<uint32_t, 32>;
 	Table *table;
 	CUDA(cudaMallocManaged(&table, sizeof(*table)));
-	new (table) Table(5); // 32 * 2^5 = 1024 rows
+	new (table) Table(21, 5); // 32 * 2^5 = 1024 rows
 
 	constexpr auto M = 1025;
 	constexpr auto N = 800;
