@@ -12,9 +12,8 @@ using addr_type = uint32_t;
 
 // Single-round Feistel permutation based on the hash family of BGHT
 // In a class so that it can easily be replaced later
-template <uint8_t key_width>
 class BasicPermute {
-	static_assert(key_width < sizeof(key_type) * 8);
+	const uint8_t hash_width; // part of key that is hashed
 
 	// Large prime from BGHT. This is 2^32 - 5.
 	static constexpr uint32_t large_prime = 4294967291ul;
@@ -28,53 +27,55 @@ class BasicPermute {
 		{1028427014, 3103505973},
 	};
 
-	// Hashes x to [0, 2^target_width) -- so long target_width < 32
+	// Hashes x to [0, 2^hash_width) -- so long hash_width < 32
 	// The hash function family from BGHT
-	template <uint8_t index, uint8_t target_width>
-	__host__ __device__ static constexpr inline uint32_t hash_base(const key_type x) {
-		static_assert(target_width < 32);
+	template <uint8_t index>
+	__host__ __device__ inline uint32_t hash_base(const key_type x) const {
 		constexpr auto a = hash_constants[index].first;
 		constexpr auto b = hash_constants[index].second;
-		return (a * x + b) % large_prime % (1ul << target_width);
+		return (a * x + b) % large_prime % (1ul << hash_width);
 	}
 
-	// Hashes x to [0, 2^target_width) -- so long target_width < 32
-	template <uint8_t target_width>
-	__host__ __device__ static constexpr uint32_t hash(const uint8_t index, const key_type x) {
+	// Hashes x to [0, 2^hash_width) -- so long hash_width < 32
+	__host__ __device__ uint32_t hash(const uint8_t index, const key_type x) const {
 		// This explicit switch is necessary to allow function to be called from device
 		assert(index < n_hash_functions);
 		switch (index) {
-			case 0: return hash_base<0, target_width>(x);
-			case 1: return hash_base<1, target_width>(x);
-			case 2: return hash_base<2, target_width>(x);
+			case 0: return hash_base<0>(x);
+			case 1: return hash_base<1>(x);
+			case 2: return hash_base<2>(x);
+			// use std::unreachable() in C++23
+			default: __builtin_unreachable();
 		}
 		static_assert(2 == n_hash_functions - 1);
-		// This cannot be reached, use std::unreachable() in C++23
-		return 0;
 	}
 
 public:
 	// One-round Feistel permutation
 	// Slight inbalance because our hash function only hashes up to 32 bits
-	__host__ __device__ static constexpr key_type permute(const uint8_t index, const key_type x) {
-		constexpr auto hash_width = std::min(key_width / 2, 31);
-		return hash<hash_width>(index, x >> hash_width) ^ x;
+	__host__ __device__ inline key_type operator()(const uint8_t index, const key_type x) const {
+		return hash(index, x >> hash_width) ^ x;
 	}
 
 	// Inverse of permute
 	// (A one-round Feistel permutation is its own inverse)
-	__host__ __device__ static constexpr key_type permute_inv(const uint8_t index, const key_type x) {
-		return permute(index, x);
+	__host__ __device__ inline key_type inv(const uint8_t index, const key_type x) const {
+		return operator()(index, x);
 	}
+
+	BasicPermute(const uint8_t key_width) : hash_width(std::min(key_width / 2, 31)) {
+		assert(key_width < sizeof(key_type) * 8);
+		assert(hash_width < 32);
+	};
 };
 
 #ifdef DOCTEST_LIBRARY_INCLUDED
 TEST_CASE("BasicPermute is as desired") {
-	using Permute = BasicPermute<31>;
+	auto permute = BasicPermute(31);
 	const key_type k = 0b110101110101; // TODO: randomize?
-	const auto once = Permute::permute(2, k);
-	const auto twice = Permute::permute(2, once);
-	const auto inv = Permute::permute_inv(2, once);
+	const auto once = permute(2, k);
+	const auto twice = permute(2, once);
+	const auto inv = permute.inv(2, once);
 	CHECK(k != once); // with high probability
 	CHECK(twice == k);
 	CHECK(inv == k);

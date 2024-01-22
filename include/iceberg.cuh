@@ -17,17 +17,16 @@ namespace cg = cooperative_groups;
 // For storing keys of width key_width (in bits).
 // The primary buckets consist of p_bucket_size rows of type p_row_type.
 // The secondary buckets consist of s_bucket_size rows of type s_row_type.
-// Keys are permuted with Permute::permute(hash_id, key), and inverted with
-// Permute::permute_inv(hash_id, permuted_key).
+// Keys are permuted with Permute(key_width)(hash_id, key), and inverted with
+// Permute(key_width).inv(hash_id, permuted_key).
 //
 // TODO: There is some code duplication between the two levels,
 // which could perhaps be reduced using fancy compile-time abstractions.
 // Could also do with more tests.
 template <
-	uint8_t key_width,
 	typename p_row_type, uint8_t p_bucket_size,
 	typename s_row_type, uint8_t s_bucket_size,
-	typename Permute = BasicPermute<key_width>
+	class Permute = BasicPermute
 >
 class Iceberg {
 	static_assert(p_bucket_size > 0
@@ -36,6 +35,8 @@ class Iceberg {
 		&& 32 % s_bucket_size == 0, "warp/bucket size must divide 32");
 
 public:
+	const Permute permute;
+
 	// Primary bits
 	const uint8_t p_row_width = sizeof(p_row_type) * 8;
 	const uint8_t p_addr_width, p_rem_width; // in bits
@@ -69,14 +70,14 @@ public:
 
 	// Hash key to an address and a row entry
 	__host__ __device__ PAddrRow p_addr_row(const key_type k) {
-		const auto pk = Permute::permute(0, k);
+		const auto pk = permute(0, k);
 		const addr_type addr = pk & mask<key_type>(p_addr_width);
 		const auto rem = pk >> p_addr_width;
 		return { addr, (p_row_type(1) << (p_row_width - p_state_width)) | rem };
 	}
 
 	__host__ __device__ SAddrRow s_addr_row(const uint8_t hash_id, const key_type k) {
-		const auto pk = Permute::permute(hash_id, k);
+		const auto pk = permute(hash_id, k);
 		const addr_type addr = pk & mask<key_type>(s_addr_width);
 		const auto rem = pk >> s_addr_width;
 		return { addr, s_row_type(hash_id + 1) << (s_row_width - s_state_width) | rem };
@@ -88,7 +89,7 @@ public:
 		const auto hash_id = 0;
 		const auto rem = row & mask<p_row_type>(p_rem_width);
 		const auto pk = (rem << p_addr_width) | addr;
-		return Permute::permute_inv(hash_id, pk);
+		return permute.inv(hash_id, pk);
 	}
 
 	// Restore key from address and row
@@ -97,7 +98,7 @@ public:
 		const auto hash_id = (row >> (s_row_width - s_state_width)) - 1;
 		const auto rem = row & mask<s_row_type>(s_rem_width);
 		const auto pk = (rem << s_addr_width) | addr;
-		return Permute::permute_inv(hash_id, pk);
+		return permute.inv(hash_id, pk);
 	}
 
 	// Count the number of occurrences of key k in the table
@@ -236,8 +237,10 @@ public:
 	// - have about 1/8 as many secondary buckets, with about 1/8 the bucket size
 	//
 	// Buckets must be aligned to cache lines for efficiency
-	Iceberg(const uint8_t primary_addr_width, const uint8_t secondary_addr_width)
-		: p_addr_width(primary_addr_width)
+	Iceberg(const uint8_t key_width,
+		const uint8_t primary_addr_width, const uint8_t secondary_addr_width)
+		: permute(key_width)
+		, p_addr_width(primary_addr_width)
 		, p_rem_width(key_width - p_addr_width)
 		, p_n_rows((1ull << p_addr_width) * sizeof(*p_rows) * p_bucket_size)
 		, s_addr_width(secondary_addr_width)
@@ -270,10 +273,10 @@ TEST_CASE("Iceberg hash table") {
 	// so that we can properly test level 2 behavior (generate conflicts).
 
 	// TODO 16 bit width only on high CC
-	using Table = Iceberg<21, uint32_t, 32, uint32_t, 16>;
+	using Table = Iceberg<uint32_t, 32, uint32_t, 16>;
 	Table *table;
 	CUDA(cudaMallocManaged(&table, sizeof(*table)));
-	new (table) Table(6, 3);
+	new (table) Table(21, 6, 3);
 
 	CHECK(table->count(0) == 0);
 
@@ -303,10 +306,10 @@ TEST_CASE("Iceberg convenience find_or_put member function") {
 	CUDA(cudaMallocManaged(&results, sizeof(*results) * n));
 	thrust::sequence(keys, keys + n);
 
-	using Table = Iceberg<21, uint32_t, 32, uint32_t, 16>;
+	using Table = Iceberg<uint32_t, 32, uint32_t, 16>;
 	Table *table;
 	CUDA(cudaMallocManaged(&table, sizeof(*table)));
-	new (table) Table(5, 3);
+	new (table) Table(21, 5, 3);
 
 	table->find_or_put(keys, keys + n, results);
 	CHECK(thrust::all_of(keys, keys + n,
@@ -322,19 +325,21 @@ TEST_CASE("Iceberg convenience find_or_put member function") {
 // We test level 2 using a small table
 // with 1 primary bucket of size 4 and two secondary of size 2
 // The permutation ensures that all keys hash to both secondary buckets
-struct Permute {
-	__host__ __device__ static key_type permute(uint8_t hid, key_type k) {
+struct SmallPermute {
+	__host__ __device__ key_type operator()(const uint8_t hid, const key_type k) const {
 		if (hid == 0) return k;
 		if (hid == 1) return k;
 		return k ^ 1;
 	}
+
+	SmallPermute(auto) {}
 };
 
 TEST_CASE("Iceberg hash table: level 2 find-or-put") {
-	using Table = Iceberg<21, uint32_t, 4, uint32_t, 2, Permute>;
+	using Table = Iceberg<uint32_t, 4, uint32_t, 2, SmallPermute>;
 	Table *table;
 	CHECK(!cudaMallocManaged(&table, sizeof(*table)));
-	new (table) Table(0, 1); // one primary bucket, two secondary
+	new (table) Table(21, 0, 1); // one primary bucket, two secondary
 
 	// We'll work with keys [0, 8], of which [0, 7] will just fit and 8 will not
 	// To test for potential race problems, we insert each key many times

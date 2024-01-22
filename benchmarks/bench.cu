@@ -95,10 +95,10 @@ BenchResult bench_cuckoo(key_type *keys, key_type *keys_end) {
 	assert(len % N_STEPS == 0);
 	float times_ms[N_RUNS];
 
-	using Table = Cuckoo<key_width, row_type, bucket_size>;
+	using Table = Cuckoo<row_type, bucket_size>;
 	Table *table;
 	CUDA(cudaMallocManaged(&table, sizeof(*table)));
-	new (table) Table(address_width);
+	new (table) Table(key_width, address_width);
 
 	Result *results;
 	CUDA(cudaMallocManaged(&results, sizeof(*results) * len));
@@ -138,12 +138,11 @@ BenchResult bench_iceberg(key_type *keys, key_type *keys_end) {
 	assert(len % N_STEPS == 0);
 	float times_ms[N_RUNS];
 
-	using Table = Iceberg<key_width,
-		p_row_type, p_bucket_size,
+	using Table = Iceberg<p_row_type, p_bucket_size,
 		s_row_type, s_bucket_size>;
 	Table *table;
 	CUDA(cudaMallocManaged(&table, sizeof(*table)));
-	new (table) Table(p_address_width, s_address_width);
+	new (table) Table(key_width, p_address_width, s_address_width);
 
 	Result *results;
 	CUDA(cudaMallocManaged(&results, sizeof(*results) * len));
