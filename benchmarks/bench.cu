@@ -9,6 +9,7 @@
 #include <functional>
 #include <map>
 #include <numeric>
+#include <sstream>
 #include <string>
 
 // Runs per benchmark
@@ -73,7 +74,25 @@ struct TableConfig {
 
 	// TODO: some stringstream magic
 	std::string describe() const {
-		return to_string(type);
+		std::ostringstream out;
+
+		switch (type) {
+			case CUCKOO: // + here for casting uint8_t (char) to int
+				out << "Cuckoo (aw " << +p_addr_width
+					<< ", rw " << +p_row_width
+					<< ", bs " << +p_bucket_size << ")";
+				break;
+			case ICEBERG:
+				out << "Iceberg (paw " << +p_addr_width
+					<< ", prw " << +p_row_width
+					<< ", pbs " << +p_bucket_size
+					<< ", saw " << +s_addr_width
+					<< ", srw " << +s_row_width
+					<< ", sbs " << +s_bucket_size << ")";
+				break;
+			default: assert(false);
+		}
+		return out.str();
 	}
 };
 
@@ -117,6 +136,7 @@ BenchResult bench_cuckoo(Benchmark bench) {
 		}
 	}
 
+	table->~Table();
 	CUDA(cudaFree(table));
 	CUDA(cudaFree(results));
 	CUDA(cudaFree(tmp));
@@ -156,13 +176,19 @@ BenchResult bench_iceberg(Benchmark bench) {
 		}
 	}
 
+	table->~Table();
 	CUDA(cudaFree(table));
 	CUDA(cudaFree(results));
 
 	return { std::accumulate(times_ms + 1, times_ms + N_RUNS, 0.f) / (N_RUNS - 1) };
 };
 
-BenchResult bench_table(TableConfig config, uint8_t key_width, key_type *keys, key_type *keys_end) {
+namespace runnerlink {
+
+}
+
+using Runner = std::function<BenchResult(Benchmark)>;
+Runner get_runner(TableConfig config) {
 	assert(config.p_row_width % 32 == 0);
 	assert(config.s_row_width % 32 == 0);
 	if (config.type == ICEBERG) {
@@ -181,17 +207,31 @@ BenchResult bench_table(TableConfig config, uint8_t key_width, key_type *keys, k
 		config.s_row_width, config.s_bucket_size
 	};
 
-	using Runner = std::function<BenchResult(Benchmark)>;
+	using u32 = uint32_t;
+	using u64 = long long unsigned;
+#define REG_CUCKOO(rw, bs)\
+	{{ CUCKOO, rw, bs }, bench_cuckoo<u##rw, bs> }
+#define REG_ICEBERG(prw, pbs, srw, sbs)\
+	{{ ICEBERG, prw, pbs, srw, sbs }, bench_iceberg<u##prw, pbs, u##srw, sbs> }
 	const std::map<Table, Runner> runners = {
-		{{ CUCKOO, 32, 32}, bench_cuckoo<uint32_t, 32>},
-		{{ ICEBERG, 32, 32, 32, 16 }, bench_iceberg<uint32_t, 32, uint32_t, 16>},
+		REG_CUCKOO(32, 32),
+		REG_CUCKOO(32, 16),
+		REG_CUCKOO(64, 16),
+		REG_ICEBERG(32, 32, 32, 16),
+		REG_ICEBERG(32, 16, 32, 8),
+		REG_ICEBERG(64, 32, 64, 16),
+		REG_ICEBERG(64, 16, 64, 8),
 	};
+#undef REG_CUCKOO
+#undef REG_ICEBERG
 
 	if (auto runner = runners.find(table); runner != runners.end()) {
-		return runner->second({ config, key_width, keys, keys_end });
+		//return runner->second({ config, key_width, keys, keys_end });
+		return runner->second;
 	}
 
-	std::cerr << "Unsupported table configuration" << std::endl;
+	std::cerr << "Unsupported table configuration: "
+		<< config.describe() << std::endl;
 	std::exit(1);
 }
 
@@ -203,9 +243,14 @@ struct Suite {
 	std::vector<TableConfig> tables;
 
 	using Results = std::vector<std::pair<TableConfig, BenchResult>>;
+
+	// Assert all table configurations are sound
+	void assert_sound() {
+		for (auto config : tables) get_runner(config);
+	}
+
 	Results run() {
 		Results results;
-
 		std::cout << "Starting benchmark suite " << name << std::endl;
 
 		std::cerr << "\tReading " << num_keys << " keys from " << keyfile << "...";
@@ -222,7 +267,7 @@ struct Suite {
 
 		for (auto config : tables) {
 			std::cout << "\t" << config.describe() << ": " << std::flush;
-			auto res = bench_table(config, key_width, keys, keys_end);
+			auto res = get_runner(config)({ config, key_width, keys, keys_end });
 			std::cout << res.average_ms << " ms" << std::endl;
 			results.push_back({config, res});
 		}
@@ -233,13 +278,36 @@ struct Suite {
 	}
 };
 
+// TODO: need some way to check that all table kinds are registered,
+// don't want to find out mid-run
 int main() {
-	Suite s {
-		"20 million keys of width 45",
-		45, 20'000'000, "benchmarks/data/1.bin",
-		{ { CUCKOO, 25, 32, 32 }
-		, { ICEBERG, 24, 32, 32, 21, 32, 16 }
-		}
+	const Suite suites[] {
+		{ "20 million keys of width 45",
+			45, 20'000'000, "benchmarks/data/1.bin",
+			{
+				//{ CUCKOO, 26, 64, 16 }
+				// type, (addr_width, row_width, bucket_size)...
+				{ CUCKOO, 25, 64, 16 }, // non-compact
+				{ CUCKOO, 25, 32, 16 }, // compact, save space
+				{ CUCKOO, 25, 32, 32 }, // compact, larger buckets
+				{ CUCKOO, 26, 32, 16 }, // compact, more buckets
+				{ ICEBERG, 24, 64, 16, 21, 64, 8 }, // non-compact
+				{ ICEBERG, 24, 32, 16, 21, 32, 8 }, // compact, save space
+				{ ICEBERG, 24, 32, 32, 21, 32, 16 }, // compact, larger buckets
+				{ ICEBERG, 24, 32, 32, 21, 32, 8 }, // compact, only larger p buck
+				{ ICEBERG, 25, 32, 16, 22, 32, 8 }, // compact, more buckets
+			}
+		},
+		{ "20 million keys of width 45, many duplicates",
+			45, 20'000'000, "benchmarks/data/dups.bin",
+			{
+				//{ CUCKOO, 26, 64, 16 }
+				{ CUCKOO, 25, 32, 32 },
+				{ ICEBERG, 25, 64, 16, 22, 64, 8 },
+				{ ICEBERG, 24, 32, 32, 21, 32, 16 },
+			}
+		},
 	};
-	s.run();
+	for (auto s : suites) s.assert_sound();
+	for (auto s : suites) s.run();
 }
