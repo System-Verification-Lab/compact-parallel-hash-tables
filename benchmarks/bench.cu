@@ -217,10 +217,14 @@ Runner get_runner(TableConfig config) {
 		REG_CUCKOO(32, 32),
 		REG_CUCKOO(32, 16),
 		REG_CUCKOO(64, 16),
+		REG_CUCKOO(64, 8),
+
 		REG_ICEBERG(32, 32, 32, 16),
+		REG_ICEBERG(32, 32, 32, 8),
 		REG_ICEBERG(32, 16, 32, 8),
 		REG_ICEBERG(64, 32, 64, 16),
 		REG_ICEBERG(64, 16, 64, 8),
+		REG_ICEBERG(64, 8, 64, 4),
 	};
 #undef REG_CUCKOO
 #undef REG_ICEBERG
@@ -288,10 +292,13 @@ int main() {
 				//{ CUCKOO, 26, 64, 16 }
 				// type, (addr_width, row_width, bucket_size)...
 				{ CUCKOO, 25, 64, 16 }, // non-compact
+				{ CUCKOO, 26, 64, 8 }, // non-compact, smaller buckets
 				{ CUCKOO, 25, 32, 16 }, // compact, save space
 				{ CUCKOO, 25, 32, 32 }, // compact, larger buckets
 				{ CUCKOO, 26, 32, 16 }, // compact, more buckets
+
 				{ ICEBERG, 24, 64, 16, 21, 64, 8 }, // non-compact
+				{ ICEBERG, 25, 64, 8, 22, 64, 4 }, // non-compact, smaller buckets
 				{ ICEBERG, 24, 32, 16, 21, 32, 8 }, // compact, save space
 				{ ICEBERG, 24, 32, 32, 21, 32, 16 }, // compact, larger buckets
 				{ ICEBERG, 24, 32, 32, 21, 32, 8 }, // compact, only larger p buck
@@ -304,7 +311,7 @@ int main() {
 				//{ CUCKOO, 26, 64, 16 }
 				{ CUCKOO, 25, 32, 32 },
 				{ ICEBERG, 25, 64, 16, 22, 64, 8 },
-				{ ICEBERG, 24, 32, 32, 21, 32, 16 },
+				{ ICEBERG, 25, 32, 32, 21, 32, 16 },
 			}
 		},
 	};
