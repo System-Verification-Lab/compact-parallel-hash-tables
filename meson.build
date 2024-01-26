@@ -15,10 +15,13 @@ add_project_arguments('--std=c++20', language: 'cuda')
 add_project_arguments('--expt-relaxed-constexpr', language: 'cuda')
 add_project_arguments('--extended-lambda', language: 'cuda')
 
+cpht_inc = include_directories('include')
+
+# external dependencies
+argparse = dependency('argparse', version: '>=3.0')
 subproject('doctest')
 doctest = dependency('doctest')
-
-cpht_inc = include_directories('include')
+json = dependency('nlohmann_json')
 
 tests = executable('tests',
 	'test/test.cu',
@@ -29,5 +32,5 @@ test('tests', tests)
 bench = executable('bench',
 	'benchmarks/bench.cu',
 	include_directories: cpht_inc,
-	dependencies: [doctest])
+	dependencies: [argparse, json])
 benchmark('bench', bench)

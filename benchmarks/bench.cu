@@ -1,6 +1,9 @@
+#include <argparse/argparse.hpp>
 #include <cuda_util.cuh>
 #include <cuckoo.cuh>
 #include <iceberg.cuh>
+#define JSON_HAS_RANGES 0
+#include <nlohmann/json.hpp>
 #include <thrust/execution_policy.h>
 #include <thrust/functional.h>
 #include <thrust/logical.h>
@@ -11,6 +14,8 @@
 #include <numeric>
 #include <sstream>
 #include <string>
+
+using json = nlohmann::json;
 
 // Runs per benchmark
 static constexpr auto N_RUNS = 10; 
@@ -51,6 +56,10 @@ enum TableType {
 	CUCKOO,
 	ICEBERG,
 };
+NLOHMANN_JSON_SERIALIZE_ENUM(TableType, {
+	{ TableType::CUCKOO, "CUCKOO" },
+	{ TableType::ICEBERG, "ICEBERG" },
+})
 
 std::string to_string(TableType type) {
 	switch (type) {
@@ -68,9 +77,9 @@ struct TableConfig {
 	uint8_t p_bucket_size;
 
 	// Iceberg only
-	uint8_t s_addr_width;
-	uint8_t s_row_width;
-	uint8_t s_bucket_size;
+	uint8_t s_addr_width = 0;
+	uint8_t s_row_width = 0;
+	uint8_t s_bucket_size = 0;
 
 	// TODO: some stringstream magic
 	std::string describe() const {
@@ -95,6 +104,35 @@ struct TableConfig {
 		return out.str();
 	}
 };
+
+// We read TableConfig as
+// { "type": "CUCKOO", "arw": [aw, rw, bs] }
+// { "type": "ICEBERG", "arw": [[paw, prw, pbs], [saw, srw, sbs]] }
+void from_json(const json& j, TableConfig& c) {
+	using ARB = std::tuple<uint8_t, uint8_t, uint8_t>;
+	ARB arb;
+	std::pair<ARB, ARB> arbs;
+
+	j.at("type").get_to(c.type);
+	switch (c.type) {
+	case CUCKOO:
+		j.at("arb").get_to(arb);
+		std::tie(c.p_addr_width, c.p_row_width, c.p_bucket_size) = arb;
+		break;
+	case ICEBERG:
+		j.at("arb").get_to(arbs);
+		std::tie(
+			c.p_addr_width, c.p_row_width, c.p_bucket_size,
+			c.s_addr_width, c.s_row_width, c.s_bucket_size
+		) = std::tuple_cat(arbs.first, arbs.second);
+		break;
+	}
+}
+
+// Not implemented, but necessary for framework
+void to_json(json& j, const TableConfig &c) {
+	assert(false);
+}
 
 struct Benchmark {
 	TableConfig config;
@@ -208,7 +246,7 @@ Runner get_runner(TableConfig config) {
 	};
 
 	using u32 = uint32_t;
-	using u64 = long long unsigned;
+	using u64 = unsigned long long;
 #define REG_CUCKOO(rw, bs)\
 	{{ CUCKOO, rw, bs }, bench_cuckoo<u##rw, bs> }
 #define REG_ICEBERG(prw, pbs, srw, sbs)\
@@ -216,15 +254,29 @@ Runner get_runner(TableConfig config) {
 	const std::map<Table, Runner> runners = {
 		REG_CUCKOO(32, 32),
 		REG_CUCKOO(32, 16),
+		REG_CUCKOO(32,  8),
+		REG_CUCKOO(32,  4),
+		REG_CUCKOO(32,  2),
+		REG_CUCKOO(32,  1),
+
+		REG_CUCKOO(64, 32),
 		REG_CUCKOO(64, 16),
-		REG_CUCKOO(64, 8),
+		REG_CUCKOO(64,  8),
+		REG_CUCKOO(64,  4),
+		REG_CUCKOO(64,  2),
+		REG_CUCKOO(64,  1),
 
 		REG_ICEBERG(32, 32, 32, 16),
-		REG_ICEBERG(32, 32, 32, 8),
-		REG_ICEBERG(32, 16, 32, 8),
+		REG_ICEBERG(32, 16, 32,  8),
+		REG_ICEBERG(32,  8, 32,  4),
+		REG_ICEBERG(32,  4, 32,  2),
+		REG_ICEBERG(32,  2, 32,  1),
+
 		REG_ICEBERG(64, 32, 64, 16),
-		REG_ICEBERG(64, 16, 64, 8),
-		REG_ICEBERG(64, 8, 64, 4),
+		REG_ICEBERG(64, 16, 64,  8),
+		REG_ICEBERG(64,  8, 64,  4),
+		REG_ICEBERG(64,  4, 64,  2),
+		REG_ICEBERG(64,  2, 64,  1),
 	};
 #undef REG_CUCKOO
 #undef REG_ICEBERG
@@ -281,40 +333,39 @@ struct Suite {
 		return results;
 	}
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Suite, name, key_width, num_keys, keyfile, tables)
 
 // TODO: need some way to check that all table kinds are registered,
 // don't want to find out mid-run
-int main() {
-	const Suite suites[] {
-		{ "20 million keys of width 45",
-			45, 20'000'000, "benchmarks/data/1.bin",
-			{
-				//{ CUCKOO, 26, 64, 16 }
-				// type, (addr_width, row_width, bucket_size)...
-				{ CUCKOO, 25, 64, 16 }, // non-compact
-				{ CUCKOO, 26, 64, 8 }, // non-compact, smaller buckets
-				{ CUCKOO, 25, 32, 16 }, // compact, save space
-				{ CUCKOO, 25, 32, 32 }, // compact, larger buckets
-				{ CUCKOO, 26, 32, 16 }, // compact, more buckets
+int main(int argc, char **argv) {
+	using argparse::ArgumentParser;
+	ArgumentParser program(argv[0]);
+	ArgumentParser cmd_suite("suite");
 
-				{ ICEBERG, 24, 64, 16, 21, 64, 8 }, // non-compact
-				{ ICEBERG, 25, 64, 8, 22, 64, 4 }, // non-compact, smaller buckets
-				{ ICEBERG, 24, 32, 16, 21, 32, 8 }, // compact, save space
-				{ ICEBERG, 24, 32, 32, 21, 32, 16 }, // compact, larger buckets
-				{ ICEBERG, 24, 32, 32, 21, 32, 8 }, // compact, only larger p buck
-				{ ICEBERG, 25, 32, 16, 22, 32, 8 }, // compact, more buckets
-			}
-		},
-		{ "20 million keys of width 45, many duplicates",
-			45, 20'000'000, "benchmarks/data/dups.bin",
-			{
-				//{ CUCKOO, 26, 64, 16 }
-				{ CUCKOO, 25, 32, 32 },
-				{ ICEBERG, 25, 64, 16, 22, 64, 8 },
-				{ ICEBERG, 25, 32, 32, 21, 32, 16 },
-			}
-		},
-	};
-	for (auto s : suites) s.assert_sound();
-	for (auto s : suites) s.run();
+	cmd_suite.add_description("Benchmark a suite");
+	cmd_suite.add_argument("suite_file");
+	program.add_subparser(cmd_suite);
+
+	try {
+		program.parse_args(argc, argv);
+	} catch (const std::exception &err) {
+		std::cerr << err.what() << std::endl;
+		return 1;
+	}
+
+	if (program.is_subcommand_used(cmd_suite)) {
+		auto path = cmd_suite.get("suite_file");
+		std::ifstream inp(path);
+		if (!inp) {
+			std::cerr << "error opening " << path << std::endl;
+			return 1;
+		}
+		std::list<Suite> suites = json::parse(inp, nullptr, true, true);
+		for (auto s : suites) s.assert_sound();
+		for (auto s : suites) s.run();
+		return 0;
+	}
+
+	// No subcommand, print help
+	std::cout << program;
 }
