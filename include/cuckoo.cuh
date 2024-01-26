@@ -30,7 +30,7 @@ class Cuckoo {
 
 public:
 	// TODO: make this configurable? In BCHT this depends on n_rows
-	static const auto max_chain_length = 5 * n_hash_functions;
+	static const auto max_chain_length = 20 * n_hash_functions;
 	static constexpr int block_size = 128;
 	static_assert(block_size % bucket_size == 0);
 
@@ -193,16 +193,15 @@ public:
 
 		auto chain_length = 0, hashid = 0;
 		while (true) {
-			const auto [addr, row] = addr_row(hashid, k);
+			auto [addr, row] = addr_row(hashid, k);
 			row_type *my_addr = rows + addr * bucket_size + rank;
 			const auto load = __popc(tile.ballot(*my_addr != 0));
 
 			if (load < bucket_size) { // insert in empty row
-				row_type old;
 				if (rank == load) {
-					old = atomicCAS(my_addr, 0, row);
+					row = atomicCAS(my_addr, 0, row);
 				}
-				if (tile.shfl(old, load) == 0) return PUT;
+				if (tile.shfl(row, load) == 0) return PUT;
 			} else { // we have to Cuckoo
 				if (chain_length >= max_chain_length) return FULL;
 				// TODO: we have multiple objectives here:
@@ -217,12 +216,11 @@ public:
 				// - I hypothesize the below is good enough
 				const auto cuckoor =
 					(blockIdx.x * blockDim.x + tile.meta_group_rank() + chain_length) % bucket_size;
-				row_type old = row;
 				if (rank == cuckoor) {
-					atomicExch(my_addr, old);
+					row = atomicExch(my_addr, row);
 				}
-				old = tile.shfl(old, cuckoor);
-				std::tie(hashid, k) = hash_key(addr, old);
+				row = tile.shfl(row, cuckoor);
+				std::tie(hashid, k) = hash_key(addr, row);
 				hashid = (hashid + 1) % n_hash_functions;
 				chain_length++;
 			}
