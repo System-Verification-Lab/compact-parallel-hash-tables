@@ -59,13 +59,14 @@ public:
 		const auto pk = permute(hash_id, k);
 		const addr_type addr = pk & mask<key_type>(addr_width);
 		const auto rem = pk >> addr_width;
-		return { addr, ((hash_id + 1) << (row_width - state_width)) | rem };
+		return { addr, (row_type(hash_id + 1) << (row_width - state_width)) | rem };
 	}
 
 	// Restore hash id and key from address and row
 	__host__ __device__ HashKey hash_key(const addr_type addr, const row_type row) {
 		assert(row != 0);
 		const auto hash_id = (row >> (row_width - state_width)) - 1;
+		assert(hash_id < n_hash_functions);
 		const auto rem = row & mask<row_type>(rem_width);
 		const auto pk = (rem << addr_width) | addr;
 		return { hash_id, permute.inv(hash_id, pk) };
