@@ -35,6 +35,9 @@ class Iceberg {
 		&& 32 % s_bucket_size == 0, "warp/bucket size must divide 32");
 
 public:
+	static constexpr int block_size = 128;
+	static_assert(block_size % p_bucket_size == 0);
+
 	const Permute permute;
 
 	// Primary bits
@@ -123,13 +126,46 @@ public:
 		return count;
 	}
 
+	// Divide work between tiled threads
+	//
+	// For every key, F(key, tile) is called by some PTile,
+	// its return value stored in results
+	//
+	// Assumes a 1d thread layout, and that p_bucket_size divides blockDim.x
+	template <auto F, class KeyIt, class ResIt>
+	__device__ void coop(const KeyIt start, const KeyIt end, ResIt results) {
+		const auto index = blockIdx.x * blockDim.x + threadIdx.x;
+		const auto stride = gridDim.x * blockDim.x;
+		const auto len = end - start;
+		const auto max = ((len + p_bucket_size - 1) / p_bucket_size) * p_bucket_size;
+
+		for (auto i = index; i < max; i += stride) {
+			key_type k;
+			bool to_act = i < len;
+			if (to_act) k = start[i];
+
+			const auto thb = cg::this_thread_block();
+			const auto tile = cg::tiled_partition<p_bucket_size>(thb);
+			const auto rank = tile.thread_rank();
+			while (auto queue = tile.ballot(to_act)) {
+				const auto leader = __ffs(queue) - 1;
+				const auto res = std::invoke(F, this,
+						tile.shfl(k, leader), tile);
+				if (rank == leader) {
+					results[i] = res;
+					to_act = false;
+				}
+			}
+		}
+	}
+
 	// Cooperatively find-or-put key k
 	//
 	// All threads in the tile must receive the same parameter k
 	__device__ Result coop_find_or_put(const key_type k, PTile tile) {
 		using enum Result;
 		const auto rank = tile.thread_rank();
-		
+
 		// Primary
 		auto [a0, r0] = p_addr_row(k);
 		while (true) {
@@ -156,10 +192,11 @@ public:
 		const auto subrank = subgroup.thread_rank();
 		const bool to_act = subrank < s_bucket_size;
 
+		const auto [a1, r1] = s_addr_row(hashid, k);
 		while (true) {
 			// Inspect buckets
-			const auto [a1, r1] = s_addr_row(hashid, k);
-			auto v = s_rows[a1 * s_bucket_size + subrank];
+			s_row_type v;
+			if (to_act) v = s_rows[a1 * s_bucket_size + subrank];
 			const bool found = (v == r1) && to_act;
 			if (tile.any(found)) return FOUND;
 
@@ -183,30 +220,7 @@ public:
 	//
 	// Assumes a 1d thread layout, and that p_bucket_size divides blockDim.x
 	__device__ void _find_or_put(const key_type *start, const key_type *end, Result *results) {
-		const auto index = blockIdx.x * blockDim.x + threadIdx.x;
-		const auto stride = gridDim.x * blockDim.x;
-		const auto len = end - start;
-		// round to p_bucket_size groups (using integer division)
-		const auto max = ((len + p_bucket_size - 1) / p_bucket_size) * p_bucket_size;
-
-		for (auto i = index; i < max; i += stride) {
-			key_type k;
-			bool to_act = i < len;
-			if (to_act) k = start[i];
-
-			// Cooperative processing (group size = p_bucket_size)
-			const auto thb = cg::this_thread_block();
-			const auto tile = cg::tiled_partition<p_bucket_size>(thb);
-			const auto rank = tile.thread_rank();
-			while (auto queue = tile.ballot(to_act)) {
-				const auto leader = __ffs(queue) - 1;
-				const auto res = coop_find_or_put(tile.shfl(k, leader), tile);
-				if (rank == leader) {
-					results[i] = res;
-					to_act = false;
-				}
-			}
-		}
+		return coop<&Iceberg::coop_find_or_put>(start, end, results);
 	}
 
 	// Find-or-put keys between start (inclusive) and end (exclusive)
@@ -214,10 +228,104 @@ public:
 	//
 	// To control thread layout, use the find_or_put kernel directly
 	void find_or_put(const key_type *start, const key_type *end, Result *results, bool sync = true) {
-		constexpr int block_size = 128;
-		static_assert(block_size % p_bucket_size == 0);
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
 		kh::find_or_put<<<n_blocks, block_size>>>(this, start, end, results);
+		if (sync) CUDA(cudaDeviceSynchronize());
+	}
+
+	__device__ bool coop_find(const key_type k, const PTile tile) {
+		const auto rank = tile.thread_rank();
+
+		// Primary
+		const auto [a0, r0] = p_addr_row(k);
+		const auto rid = a0 * p_bucket_size + rank;
+		if (tile.any(p_rows[rid] == r0)) return true;
+
+		// Secondary level
+		// We divide the tile in two subgroups, inspecting one secondary bucket each
+		// NOTE: we make the assumption that a thread is in tile rank / (p_bucket_size / 2).
+		// This seems to be the way it works but it's not super well documented.
+		static_assert(s_bucket_size * 2 <= p_bucket_size);
+		const auto subgroup = cg::tiled_partition<p_bucket_size / 2>(tile);
+		const auto hashid = subgroup.meta_group_rank() + 1;
+		const auto subrank = subgroup.thread_rank();
+		const bool to_act = subrank < s_bucket_size;
+		const auto [a1, r1] = s_addr_row(hashid, k);
+
+		p_row_type v;
+		if (to_act) v = s_rows[a1 * s_bucket_size + subrank];
+		const bool found = (v == r1) && to_act;
+		if (tile.any(found)) return true;
+
+		return false;
+	}
+
+	// Find keys
+	template <class KeyIt, class BoolIt>
+	void find(const KeyIt start, const KeyIt end, BoolIt results, bool sync = true) {
+		const int n_blocks = ((end - start) + block_size - 1) / block_size;
+		invoke_device<&Iceberg::coop<&Iceberg::coop_find, KeyIt, BoolIt>>
+			<<<n_blocks, block_size>>>(this, start, end, results);
+		if (sync) CUDA(cudaDeviceSynchronize());
+	}
+
+	// Put key WITHOUT checking if the key is already in the table
+	__device__ Result coop_put(const key_type k, const PTile tile) {
+		using enum Result;
+		const auto rank = tile.thread_rank();
+
+		// Primary
+		auto [a0, r0] = p_addr_row(k);
+		while (true) {
+			const auto rid = a0 * p_bucket_size + rank;
+			auto v = p_rows[rid];
+			const auto load = __popc(tile.ballot(v != 0));
+			if (load == p_bucket_size) break; // to secondary
+
+			if (rank == load) {
+				v = atomicCAS(p_rows + a0 * p_bucket_size + load, p_row_type(0), r0);
+			}
+			if (tile.shfl(v, load) == 0) return PUT;
+		}
+
+		// Secondary level
+		// We divide the tile in two subgroups, inspecting one secondary bucket each
+		// NOTE: we make the assumption that a thread is in tile rank / (p_bucket_size / 2).
+		// This seems to be the way it works but it's not super well documented.
+		static_assert(s_bucket_size * 2 <= p_bucket_size);
+		const auto subgroup = cg::tiled_partition<p_bucket_size / 2>(tile);
+		const auto hashid = subgroup.meta_group_rank() + 1;
+		const auto subrank = subgroup.thread_rank();
+		const bool to_act = subrank < s_bucket_size;
+
+		const auto [a1, r1] = s_addr_row(hashid, k);
+		while (true) {
+			// Inspect buckets
+			s_row_type v;
+			if (to_act) v = s_rows[a1 * s_bucket_size + subrank];
+
+			// Compare loads
+			const auto load = __popc(subgroup.ballot((v != 0) && to_act));
+			const auto load1 = tile.shfl(load, 0); // first subgroup
+			const auto load2 = tile.shfl(load, p_bucket_size / 2); // second subgroup
+			if (load1 == s_bucket_size && load2 == s_bucket_size) return FULL;
+
+			// Insert in least full bucket (when tied, in the second)
+			// This is where we use the assumption on partition tiling.
+			const auto leader = (load1 >= load2) * p_bucket_size / 2;
+			if (rank == leader) {
+				v = atomicCAS(s_rows + a1 * s_bucket_size + load, 0, r1);
+			}
+			if (tile.shfl(v, leader) == 0) return PUT;
+		}
+	}
+
+	// Put keys WITHOUT checking if the key is already in the table
+	template <class KeyIt, class ResIt>
+	void put(const KeyIt start, const KeyIt end, ResIt results, bool sync = true) {
+		const int n_blocks = ((end - start) + block_size - 1) / block_size;
+		invoke_device<&Iceberg::coop<&Iceberg::coop_put, KeyIt, ResIt>>
+			<<<n_blocks, block_size>>>(this, start, end, results);
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
 
@@ -269,9 +377,6 @@ public:
 using namespace kh;
 
 TEST_CASE("Iceberg hash table") {
-	// TODO: allow to swap out the permute function via template argument,
-	// so that we can properly test level 2 behavior (generate conflicts).
-
 	// TODO 16 bit width only on high CC
 	using Table = Iceberg<uint32_t, 32, uint32_t, 16>;
 	Table *table;
@@ -293,6 +398,7 @@ TEST_CASE("Iceberg hash table") {
 	CHECK(thrust::count(results, results + n, Result::PUT) == 1);
 	CHECK(thrust::count(results, results + n, Result::FOUND) == n - 1);
 
+	table->~Table();
 	CUDA(cudaFree(keys));
 	CUDA(cudaFree(results));
 	CHECK(!cudaFree(table));
@@ -317,6 +423,38 @@ TEST_CASE("Iceberg convenience find_or_put member function") {
 			return table->count(key) == 1 && results[key] == Result::PUT;
 		}));
 
+	table->~Table();
+	CUDA(cudaFree(keys));
+	CUDA(cudaFree(results));
+	CUDA(cudaFree(table));
+}
+
+TEST_CASE("Iceberg: put and find") {
+	constexpr auto n = 1000;
+	key_type *keys;
+	Result *results;
+	bool *found;
+	CUDA(cudaMallocManaged(&keys, sizeof(*keys) * n));
+	CUDA(cudaMallocManaged(&found, sizeof(*found) * n));
+	CUDA(cudaMallocManaged(&results, sizeof(*results) * n));
+	thrust::sequence(keys, keys + n);
+
+	using Table = Iceberg<uint32_t, 32, uint32_t, 16>;
+	Table *table;
+	CUDA(cudaMallocManaged(&table, sizeof(*table)));
+	new (table) Table(21, 5, 3);
+
+	table->put(keys, keys + n / 2, results);
+	table->find(keys, keys + n, found);
+	CHECK(thrust::all_of(keys, keys + n,
+		[table, found, results] (auto key) {
+			auto c = table->count(key);
+			return (key < n / 2)
+				? (c == 1 && found[key] && results[key] == Result::PUT)
+				: (c == 0 && !found[key]);
+		}));
+
+	table->~Table();
 	CUDA(cudaFree(keys));
 	CUDA(cudaFree(results));
 	CUDA(cudaFree(table));
