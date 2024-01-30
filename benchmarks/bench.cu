@@ -12,6 +12,7 @@
 #include <functional>
 #include <map>
 #include <numeric>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -48,9 +49,11 @@ struct Timer {
 	}
 };
 
-struct BenchResult {
+struct BenchData {
 	float average_ms;
 };
+
+using BenchResult = std::optional<BenchData>;
 
 enum TableType {
 	CUCKOO,
@@ -168,10 +171,7 @@ BenchResult bench_cuckoo(Benchmark bench) {
 		times_ms[i] = timer.stop();
 
 		bool full = thrust::find(results, results + len, Result::FULL) != results + len;
-		if (full) {
-			fprintf(stderr, "bench: table was full! Results are not trustworthy");
-			std::exit(1);
-		}
+		if (full) return {};
 	}
 
 	table->~Table();
@@ -179,7 +179,9 @@ BenchResult bench_cuckoo(Benchmark bench) {
 	CUDA(cudaFree(results));
 	CUDA(cudaFree(tmp));
 
-	return { std::accumulate(times_ms + 1, times_ms + N_RUNS, 0.f) / (N_RUNS - 1) };
+	return BenchData {
+		std::accumulate(times_ms + 1, times_ms + N_RUNS, 0.f) / (N_RUNS - 1)
+	};
 };
 
 template <typename p_row_type, uint8_t p_bucket_size,
@@ -208,22 +210,17 @@ BenchResult bench_iceberg(Benchmark bench) {
 		times_ms[i] = timer.stop();
 
 		bool full = thrust::find(results, results + len, Result::FULL) != results + len;
-		if (full) {
-			fprintf(stderr, "bench: table was full! Results are not trustworthy");
-			std::exit(1);
-		}
+		if (full) return {};
 	}
 
 	table->~Table();
 	CUDA(cudaFree(table));
 	CUDA(cudaFree(results));
 
-	return { std::accumulate(times_ms + 1, times_ms + N_RUNS, 0.f) / (N_RUNS - 1) };
+	return BenchData {
+		std::accumulate(times_ms + 1, times_ms + N_RUNS, 0.f) / (N_RUNS - 1)
+	};
 };
-
-namespace runnerlink {
-
-}
 
 using Runner = std::function<BenchResult(Benchmark)>;
 Runner get_runner(TableConfig config) {
@@ -324,7 +321,11 @@ struct Suite {
 		for (auto config : tables) {
 			std::cout << "\t" << config.describe() << ": " << std::flush;
 			auto res = get_runner(config)({ config, key_width, keys, keys_end });
-			std::cout << res.average_ms << " ms" << std::endl;
+			if (res) {
+				std::cout << res->average_ms << " ms" << std::endl;
+			} else {
+				std::cout << "FULL" << std::endl;
+			}
 			results.push_back({config, res});
 		}
 
