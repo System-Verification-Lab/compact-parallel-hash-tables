@@ -4,7 +4,7 @@
 #include <cuda_runtime.h>
 #include <functional>
 
-void cuda_assert(cudaError_t code, const char *file, const int line) {
+inline void cuda_assert(cudaError_t code, const char *file, const int line) {
 	if (code == cudaSuccess) return;
 	fprintf(stderr, "%s:%d CUDA error %s\n", file, line, cudaGetErrorString(code));
 	std::exit(1);

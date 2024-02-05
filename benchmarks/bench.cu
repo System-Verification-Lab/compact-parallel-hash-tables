@@ -1,7 +1,6 @@
+#include "cuda_util.cuh"
+#include "benchmarks.h"
 #include <argparse/argparse.hpp>
-#include <cuda_util.cuh>
-#include <cuckoo.cuh>
-#include <iceberg.cuh>
 #define JSON_HAS_RANGES 0
 #include <nlohmann/json.hpp>
 #include <thrust/execution_policy.h>
@@ -18,91 +17,40 @@
 
 using json = nlohmann::json;
 
-// Runs per benchmark
-static constexpr auto N_RUNS = 10; 
-// Steps in find-or-put process. First run is always discarded.
-static constexpr auto N_STEPS = 10;
-
-struct Timer {
-	cudaEvent_t before, after;
-	float time;
-
-	inline void start() {
-		cudaEventRecord(before);
-	}
-
-	inline float stop() {
-		cudaEventRecord(after);
-		cudaEventSynchronize(after);
-		cudaEventElapsedTime(&time, before, after);
-		return time;
-	}
-
-	Timer() {
-		cudaEventCreate(&before);
-		cudaEventCreate(&after);
-	}
-
-	~Timer() {
-		cudaEventDestroy(before);
-		cudaEventDestroy(after);
-	}
-};
-
-struct BenchData {
-	float average_ms;
-};
-
-using BenchResult = std::optional<BenchData>;
-
-enum TableType {
-	CUCKOO,
-	ICEBERG,
-};
 NLOHMANN_JSON_SERIALIZE_ENUM(TableType, {
 	{ TableType::CUCKOO, "CUCKOO" },
 	{ TableType::ICEBERG, "ICEBERG" },
-})
+});
 
 std::string to_string(TableType type) {
 	switch (type) {
-		case CUCKOO: return "Cuckoo";
-		case ICEBERG: return "Iceberg";
-		default: assert(false);
+		case TableType::CUCKOO: return "Cuckoo";
+		case TableType::ICEBERG: return "Iceberg";
 	}
+	assert(false);
 }
 
-struct TableConfig {
-	TableType type;
+struct TableDesc {
+	TableSpec spec;
+	TableConfig conf;
 
-	uint8_t p_addr_width;
-	uint8_t p_row_width;
-	uint8_t p_bucket_size;
-
-	// Iceberg only
-	uint8_t s_addr_width = 0;
-	uint8_t s_row_width = 0;
-	uint8_t s_bucket_size = 0;
-
-	// TODO: some stringstream magic
 	std::string describe() const {
 		std::ostringstream out;
 
-		switch (type) {
-			case CUCKOO: // + here for casting uint8_t (char) to int
-				out << "Cuckoo (aw " << +p_addr_width
-					<< ", rw " << +p_row_width
-					<< ", bs " << +p_bucket_size << ")";
-				break;
-			case ICEBERG:
-				out << "Iceberg (paw " << +p_addr_width
-					<< ", prw " << +p_row_width
-					<< ", pbs " << +p_bucket_size
-					<< ", saw " << +s_addr_width
-					<< ", srw " << +s_row_width
-					<< ", sbs " << +s_bucket_size << ")";
-				break;
-			default: assert(false);
+		switch (spec.type) {
+		case TableType::CUCKOO: // + here for casting uint8_t (char) to int
+			out << "Cuckoo (aw " << +conf.p_addr_width
+				<< ", rw " << +spec.p_row_width
+				<< ", bs " << +spec.p_bucket_size << ")";
+			break;
+		case TableType::ICEBERG:
+			out << "Iceberg (paw " << +conf.p_addr_width
+				<< ", prw " << +spec.p_row_width
+				<< ", pbs " << +spec.p_bucket_size
+				<< ", saw " << +conf.s_addr_width
+				<< ", srw " << +spec.s_row_width
+				<< ", sbs " << +spec.s_bucket_size << ")";
+			break;
 		}
 		return out.str();
 	}
@@ -111,181 +59,33 @@ struct TableConfig {
 // We read TableConfig as
 // { "type": "CUCKOO", "arw": [aw, rw, bs] }
 // { "type": "ICEBERG", "arw": [[paw, prw, pbs], [saw, srw, sbs]] }
-void from_json(const json& j, TableConfig& c) {
+void from_json(const json& j, TableDesc& d) {
 	using ARB = std::tuple<uint8_t, uint8_t, uint8_t>;
+	TableConfig &c(d.conf);
+	TableSpec &s(d.spec);
+
 	ARB arb;
 	std::pair<ARB, ARB> arbs;
 
-	j.at("type").get_to(c.type);
-	switch (c.type) {
-	case CUCKOO:
+	j.at("type").get_to(d.spec.type);
+	switch (d.spec.type) {
+	case TableType::CUCKOO:
 		j.at("arb").get_to(arb);
-		std::tie(c.p_addr_width, c.p_row_width, c.p_bucket_size) = arb;
+		std::tie(c.p_addr_width, s.p_row_width, s.p_bucket_size) = arb;
 		break;
-	case ICEBERG:
+	case TableType::ICEBERG:
 		j.at("arb").get_to(arbs);
 		std::tie(
-			c.p_addr_width, c.p_row_width, c.p_bucket_size,
-			c.s_addr_width, c.s_row_width, c.s_bucket_size
+			c.p_addr_width, s.p_row_width, s.p_bucket_size,
+			c.s_addr_width, s.s_row_width, s.s_bucket_size
 		) = std::tuple_cat(arbs.first, arbs.second);
 		break;
 	}
 }
 
 // Not implemented, but necessary for framework
-void to_json(json& j, const TableConfig &c) {
+void to_json(json& j, const TableDesc &c) {
 	assert(false);
-}
-
-struct Benchmark {
-	TableConfig config;
-	uint8_t key_width;
-	key_type *keys;
-	key_type *keys_end;
-};
-
-template <typename row_type, uint8_t bucket_size>
-BenchResult bench_cuckoo(Benchmark bench) {
-	const auto len = bench.keys_end - bench.keys;
-	assert(len % N_STEPS == 0);
-	float times_ms[N_RUNS];
-
-	using Table = Cuckoo<row_type, bucket_size>;
-	Table *table;
-	CUDA(cudaMallocManaged(&table, sizeof(*table)));
-	new (table) Table(bench.key_width, bench.config.p_addr_width);
-
-	Result *results;
-	CUDA(cudaMallocManaged(&results, sizeof(*results) * len));
-	key_type *tmp;
-	CUDA(cudaMallocManaged(&tmp, sizeof(*tmp) * len * 2));
-
-	Timer timer;
-	for (auto i = 0; i < N_RUNS; i++) {
-		table->clear();
-
-		timer.start();
-		for (auto n = 0; n < len; n += len / N_STEPS) {
-			table->find_or_put(bench.keys, bench.keys + n, tmp, results, false);
-		}
-		times_ms[i] = timer.stop();
-
-		bool full = thrust::find(results, results + len, Result::FULL) != results + len;
-		if (full) return {};
-	}
-
-	table->~Table();
-	CUDA(cudaFree(table));
-	CUDA(cudaFree(results));
-	CUDA(cudaFree(tmp));
-
-	return BenchData {
-		std::accumulate(times_ms + 1, times_ms + N_RUNS, 0.f) / (N_RUNS - 1)
-	};
-};
-
-template <typename p_row_type, uint8_t p_bucket_size,
-	typename s_row_type, uint8_t s_bucket_size>
-BenchResult bench_iceberg(Benchmark bench) {
-	const auto len = bench.keys_end - bench.keys;
-	assert(len % N_STEPS == 0);
-	float times_ms[N_RUNS];
-
-	using Table = Iceberg<p_row_type, p_bucket_size, s_row_type, s_bucket_size>;
-	Table *table;
-	CUDA(cudaMallocManaged(&table, sizeof(*table)));
-	new (table) Table(bench.key_width, bench.config.p_addr_width, bench.config.s_addr_width);
-
-	Result *results;
-	CUDA(cudaMallocManaged(&results, sizeof(*results) * len));
-
-	Timer timer;
-	for (auto i = 0; i < N_RUNS; i++) {
-		table->clear();
-
-		timer.start();
-		for (auto n = 0; n < len; n += len / N_STEPS) {
-			table->find_or_put(bench.keys, bench.keys + n, results, false);
-		}
-		times_ms[i] = timer.stop();
-
-		bool full = thrust::find(results, results + len, Result::FULL) != results + len;
-		if (full) return {};
-	}
-
-	table->~Table();
-	CUDA(cudaFree(table));
-	CUDA(cudaFree(results));
-
-	return BenchData {
-		std::accumulate(times_ms + 1, times_ms + N_RUNS, 0.f) / (N_RUNS - 1)
-	};
-};
-
-using Runner = std::function<BenchResult(Benchmark)>;
-Runner get_runner(TableConfig config) {
-	assert(config.p_row_width % 32 == 0);
-	assert(config.s_row_width % 32 == 0);
-	if (config.type == ICEBERG) {
-		assert(32 % config.p_bucket_size == 0);
-		assert(32 % config.s_bucket_size == 0);
-	}
-
-	struct Table {
-		TableType type;
-		uint8_t p_row_width; uint8_t p_bucket_size;
-		uint8_t s_row_width; uint8_t s_bucket_size;
-		auto operator<=>(const Table&) const = default;
-	} table {
-		config.type,
-		config.p_row_width, config.p_bucket_size,
-		config.s_row_width, config.s_bucket_size
-	};
-
-	using u32 = uint32_t;
-	using u64 = unsigned long long;
-#define REG_CUCKOO(rw, bs)\
-	{{ CUCKOO, rw, bs }, bench_cuckoo<u##rw, bs> }
-#define REG_ICEBERG(prw, pbs, srw, sbs)\
-	{{ ICEBERG, prw, pbs, srw, sbs }, bench_iceberg<u##prw, pbs, u##srw, sbs> }
-	const std::map<Table, Runner> runners = {
-		REG_CUCKOO(32, 32),
-		REG_CUCKOO(32, 16),
-		REG_CUCKOO(32,  8),
-		REG_CUCKOO(32,  4),
-		REG_CUCKOO(32,  2),
-		REG_CUCKOO(32,  1),
-
-		REG_CUCKOO(64, 32),
-		REG_CUCKOO(64, 16),
-		REG_CUCKOO(64,  8),
-		REG_CUCKOO(64,  4),
-		REG_CUCKOO(64,  2),
-		REG_CUCKOO(64,  1),
-
-		REG_ICEBERG(32, 32, 32, 16),
-		REG_ICEBERG(32, 16, 32,  8),
-		REG_ICEBERG(32,  8, 32,  4),
-		REG_ICEBERG(32,  4, 32,  2),
-		REG_ICEBERG(32,  2, 32,  1),
-
-		REG_ICEBERG(64, 32, 64, 16),
-		REG_ICEBERG(64, 16, 64,  8),
-		REG_ICEBERG(64,  8, 64,  4),
-		REG_ICEBERG(64,  4, 64,  2),
-		REG_ICEBERG(64,  2, 64,  1),
-	};
-#undef REG_CUCKOO
-#undef REG_ICEBERG
-
-	if (auto runner = runners.find(table); runner != runners.end()) {
-		//return runner->second({ config, key_width, keys, keys_end });
-		return runner->second;
-	}
-
-	std::cerr << "Unsupported table configuration: "
-		<< config.describe() << std::endl;
-	std::exit(1);
 }
 
 struct Suite {
@@ -293,16 +93,25 @@ struct Suite {
 	uint8_t key_width;
 	size_t num_keys;
 	std::string keyfile;
-	std::vector<TableConfig> tables;
+	std::vector<TableDesc> tables;
 
-	using Results = std::vector<std::pair<TableConfig, BenchResult>>;
+	using Results = std::vector<std::pair<TableDesc, FopResult>>;
 
 	// Assert all table configurations are sound
 	void assert_sound() {
-		for (auto config : tables) get_runner(config);
+		for (auto desc : tables) {
+			if (!has_runners(desc.spec)) {
+				std::cerr << "Unsupported table type: "
+					<< desc.describe() << std::endl;
+				std::exit(1);
+			}
+		}
 	}
 
 	Results run() {
+		// Inform descriptions about key_width
+		for (auto &desc : tables) desc.conf.key_width = key_width;
+
 		Results results;
 		std::cout << "Starting benchmark suite " << name << std::endl;
 
@@ -318,15 +127,16 @@ struct Suite {
 		thrust::all_of(thrust::device, keys, keys_end, thrust::identity<key_type>());
 		std::cerr << "done." << std::endl;
 
-		for (auto config : tables) {
-			std::cout << "\t" << config.describe() << ": " << std::flush;
-			auto res = get_runner(config)({ config, key_width, keys, keys_end });
-			if (res) {
-				std::cout << res->average_ms << " ms" << std::endl;
+		for (auto desc : tables) {
+			std::cout << "\t" << desc.describe() << ": " << std::flush;
+			auto runners = get_runners(desc.spec);
+			auto res = runners.fop(desc.conf, FopBenchmark { keys, keys_end });
+			if (res.average_ms) {
+				std::cout << res.average_ms.value() << " ms" << std::endl;
 			} else {
 				std::cout << "FULL" << std::endl;
 			}
-			results.push_back({config, res});
+			results.push_back({desc, res});
 		}
 
 		std::cout << std::endl;
@@ -336,8 +146,6 @@ struct Suite {
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Suite, name, key_width, num_keys, keyfile, tables)
 
-// TODO: need some way to check that all table kinds are registered,
-// don't want to find out mid-run
 int main(int argc, char **argv) {
 	using argparse::ArgumentParser;
 	ArgumentParser program(argv[0]);

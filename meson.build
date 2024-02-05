@@ -16,6 +16,7 @@ add_project_arguments('--expt-relaxed-constexpr', language: 'cuda')
 add_project_arguments('--extended-lambda', language: 'cuda')
 
 cpht_inc = include_directories('include')
+benchmarks_inc = include_directories('benchmarks')
 
 # external dependencies
 argparse = dependency('argparse', version: '>=3.0')
@@ -31,6 +32,7 @@ test('tests', tests)
 
 bench = executable('bench',
 	'benchmarks/bench.cu',
-	include_directories: cpht_inc,
+	'benchmarks/benchmarks.cu',
+	include_directories: [cpht_inc, benchmarks_inc],
 	dependencies: [argparse, json])
 benchmark('bench', bench)
