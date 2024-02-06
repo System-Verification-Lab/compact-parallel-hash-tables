@@ -95,7 +95,11 @@ struct Suite {
 	std::string keyfile;
 	std::vector<TableDesc> tables;
 
-	using Results = std::vector<std::pair<TableDesc, FopResult>>;
+	struct SuiteResult {
+		FopResult fop;
+		PutResult put;
+	};
+	using Results = std::vector<std::pair<TableDesc, SuiteResult>>;
 
 	// Assert all table configurations are sound
 	void assert_sound() {
@@ -127,16 +131,33 @@ struct Suite {
 		thrust::all_of(thrust::device, keys, keys_end, thrust::identity<key_type>());
 		std::cerr << "done." << std::endl;
 
+		std::cout << "\tTable: fop_ms\tput_ms" << std::endl;
 		for (auto desc : tables) {
 			std::cout << "\t" << desc.describe() << ": " << std::flush;
 			auto runners = get_runners(desc.spec);
-			auto res = runners.fop(desc.conf, FopBenchmark { keys, keys_end });
-			if (res.average_ms) {
-				std::cout << res.average_ms.value() << " ms" << std::endl;
+
+			const auto fopr = runners.fop(desc.conf, FopBenchmark { keys, keys_end });
+			if (fopr.average_ms) {
+				std::cout << fopr.average_ms.value() << " ms";
 			} else {
-				std::cout << "FULL" << std::endl;
+				std::cout << "FULL";
 			}
-			results.push_back({desc, res});
+
+			std::cout << "\t" << std::flush;
+
+			const auto putr = runners.put(desc.conf, PutBenchmark { keys, keys_end });
+			if (putr.average_ms) {
+				std::cout << putr.average_ms.value() << " ms";
+			} else {
+				std::cout << "FULL";
+			}
+
+			std::cout << std::endl;
+
+			results.push_back({desc, SuiteResult {
+				.fop = fopr,
+				.put = putr,
+			}});
 		}
 
 		std::cout << std::endl;

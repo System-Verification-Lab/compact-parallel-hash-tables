@@ -119,8 +119,35 @@ FopResult fop_runner(TableConfig conf, FopBenchmark bench) {
 }
 
 template <TableSpec spec>
-PutResult put_runner(TableConfig config, PutBenchmark bench) {
-	assert(false);
+PutResult put_runner(TableConfig conf, PutBenchmark bench) {
+	using T = Table<spec>;
+	const auto len = bench.keys_end - bench.keys;
+	assert(len % N_STEPS == 0);
+	float times_ms[N_RUNS];
+
+	T *table = new_table<spec>(conf);
+	Result *results;
+	CUDA(cudaMallocManaged(&results, sizeof(*results) * len));
+
+	Timer timer;
+	for (auto i = 0; i < N_RUNS; i++) {
+		table->clear();
+
+		timer.start();
+		table->put(bench.keys, bench.keys_end, results, false);
+		times_ms[i] = timer.stop();
+
+		bool full = thrust::find(results, results + len, Result::FULL) != results + len;
+		if (full) return PutResult { {} };
+	}
+
+	table->~T();
+	CUDA(cudaFree(table));
+	CUDA(cudaFree(results));
+
+	return PutResult {
+		std::accumulate(times_ms + 1, times_ms + N_RUNS, 0.f) / (N_RUNS - 1)
+	};
 }
 
 //
