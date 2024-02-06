@@ -104,7 +104,9 @@ FopResult fop_runner(TableConfig conf, FopBenchmark bench) {
 		}
 		times_ms[i] = timer.stop();
 
-		bool full = thrust::find(results, results + len, Result::FULL) != results + len;
+		CUDA(cudaDeviceSynchronize());
+		bool full = thrust::find(thrust::device,
+			results, results + len, Result::FULL) != results + len;
 		if (full) return FopResult { {} };
 	}
 
@@ -137,7 +139,9 @@ PutResult put_runner(TableConfig conf, PutBenchmark bench) {
 		table->put(bench.keys, bench.keys_end, results, false);
 		times_ms[i] = timer.stop();
 
-		bool full = thrust::find(results, results + len, Result::FULL) != results + len;
+		CUDA(cudaDeviceSynchronize());
+		bool full = thrust::find(thrust::device,
+			results, results + len, Result::FULL) != results + len;
 		if (full) return PutResult { {} };
 	}
 
