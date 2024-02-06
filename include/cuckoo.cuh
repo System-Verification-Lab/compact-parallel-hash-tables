@@ -88,8 +88,8 @@ public:
 	//
 	// F(key, tile) is called for every key from start to end (exclusive) by one Tile
 	// the associated return value is stored in results
-	template <auto F>
-	__device__ void coop(const key_type *start, const key_type *end, auto *results) {
+	template <auto F, class KeyIt, class ResIt>
+	__device__ void coop(const KeyIt start, const KeyIt end, ResIt results) {
 		const auto index = blockIdx.x * blockDim.x + threadIdx.x;
 		const auto stride = gridDim.x * blockDim.x;
 		const auto len = end - start;
@@ -187,21 +187,31 @@ public:
 	}
 
 	// NOTE: does not handle duplicates!
+	// If avoid_dups is true, tries to avoid some in-bucket duplicates
+	template <bool avoid_dups = false>
 	__device__ Result coop_put(key_type k, const Tile tile) {
 		using enum Result;
 		const auto rank = tile.thread_rank();
 
 		auto chain_length = 0, hashid = 0;
 		while (true) {
-			auto [addr, row] = addr_row(hashid, k);
+			const auto [addr, row] = addr_row(hashid, k);
 			row_type *my_addr = rows + addr * bucket_size + rank;
-			const auto load = __popc(tile.ballot(*my_addr != 0));
+			row_type tmp = *my_addr;
+			if constexpr (avoid_dups) {
+				if (tile.any(tmp == row)) return FOUND;
+			}
 
+			const auto load = __popc(tile.ballot(tmp != 0));
 			if (load < bucket_size) { // insert in empty row
 				if (rank == load) {
-					row = atomicCAS(my_addr, 0, row);
+					tmp = atomicCAS(my_addr, 0, row);
 				}
-				if (tile.shfl(row, load) == 0) return PUT;
+				tmp = tile.shfl(tmp, load);
+				if (tmp == 0) return PUT;
+				if constexpr (avoid_dups) {
+					if (tmp == row) return FOUND;
+				}
 			} else { // we have to Cuckoo
 				if (chain_length >= max_chain_length) return FULL;
 				// TODO: we have multiple objectives here:
@@ -217,10 +227,13 @@ public:
 				const auto cuckoor =
 					(blockIdx.x * blockDim.x + tile.meta_group_rank() + chain_length) % bucket_size;
 				if (rank == cuckoor) {
-					row = atomicExch(my_addr, row);
+					tmp = atomicExch(my_addr, row);
 				}
-				row = tile.shfl(row, cuckoor);
-				std::tie(hashid, k) = hash_key(addr, row);
+				tmp = tile.shfl(tmp, cuckoor);
+				if constexpr (avoid_dups) {
+					if (tmp == row) return FOUND;
+				}
+				std::tie(hashid, k) = hash_key(addr, tmp);
 				hashid = (hashid + 1) % n_hash_functions;
 				chain_length++;
 			}
@@ -231,7 +244,7 @@ public:
 	//
 	// Assumes a 1d thread layout, and that p_bucket_size divides blockDim.x
 	__device__ void _put(const key_type *start, const key_type *end, Result *results) {
-		coop<&Cuckoo::coop_put>(start, end, results);
+		coop<&Cuckoo::coop_put<false>>(start, end, results);
 	}
 
 	// Attempt to put given keys in the table
@@ -239,6 +252,17 @@ public:
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
 		// calls _put
 		kh::put<<<n_blocks, block_size>>>(this, start, end, results);
+		if (sync) CUDA(cudaDeviceSynchronize());
+	}
+
+	// Attempt to put given keys in the table, partly avoiding in-bucket duplicates
+	//
+	// Does _not_ guarantee no duplicates
+	template <class KeyIt, class ResIt>
+	void put_avoid_dups(const KeyIt start, const KeyIt end, ResIt results, bool sync = true) {
+		const int n_blocks = ((end - start) + block_size - 1) / block_size;
+		invoke_device<&Cuckoo::coop<&Cuckoo::coop_put<true>, KeyIt, ResIt>>
+			<<<n_blocks, block_size>>>(this, start, end, results);
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
 
