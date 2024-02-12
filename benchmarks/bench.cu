@@ -103,13 +103,15 @@ struct Suite {
 
 	// Assert all table configurations are sound
 	void assert_sound() {
+		bool sound = true;
 		for (auto desc : tables) {
 			if (!has_runners(desc.spec)) {
 				std::cerr << "Unsupported table type: "
 					<< desc.describe() << std::endl;
-				std::exit(1);
+				sound = false;
 			}
 		}
+		if (!sound) std::exit(1);
 	}
 
 	Results run() {

@@ -196,7 +196,10 @@ static const std::map<TableSpec, Runners> registry {
 
 	iceberg<32, 32, 32, 16>,
 	iceberg<32, 16, 32,  8>,
+	iceberg<32, 16, 32,  4>,
+	iceberg<32, 16, 32,  2>,
 	iceberg<32,  8, 32,  4>,
+	iceberg<32,  8, 32,  2>,
 	iceberg<32,  4, 32,  2>,
 	iceberg<32,  2, 32,  1>,
 
