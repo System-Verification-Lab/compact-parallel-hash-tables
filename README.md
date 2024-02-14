@@ -13,9 +13,10 @@ To compile the tests,
 [install Meson and Ninja](https://mesonbuild.com/Getting-meson.html)
 and setup a build directory using
 ```
-meson setup build
+meson setup build -Dbuildtype=debugoptimized -Dwerror=false
 ```
-The tests can then be run with
+In particular, `werror` must be disabled because of some warnings generated in
+CUB. The tests can then be run with
 ```
 meson test -C build
 ```
@@ -24,7 +25,7 @@ __Warning:__ current versions of Meson do not properly trigger a rebuild for
 nvcc executables if included headers change.
 Run
 ```
-meson compile -C build --clean
+meson compile -C build --clean; meson compile -C build
 ```
 to trigger a full rebuild of the tests after modifying the headers.
 This should not be necessary for (future) Meson versions > 1.3.1.
