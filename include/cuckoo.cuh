@@ -53,6 +53,7 @@ public:
 	//   - state 1 + i indicates hash function i
 	// - the least significant rem_width bits indicate the remainder
 	row_type *rows;
+	CuSP<row_type> _rows; // shared pointer for handling the memory
 
 	// Hash key to an address and a row entry
 	__host__ __device__ AddrRow addr_row(const uint8_t hash_id, const key_type k) {
@@ -181,8 +182,9 @@ public:
 	// Attempt to find given keys in the table
 	void find(const key_type *start, const key_type *end, bool *results, bool sync = true) {
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
-		// calls _find
-		kh::find<<<n_blocks, block_size>>>(this, start, end, results);
+		invoke_device<&Cuckoo::_find>
+			<<<n_blocks, block_size>>>(*this, start, end, results);
+
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
 
@@ -251,7 +253,8 @@ public:
 	void put(const key_type *start, const key_type *end, Result *results, bool sync = true) {
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
 		// calls _put
-		kh::put<<<n_blocks, block_size>>>(this, start, end, results);
+		invoke_device<&Cuckoo::_put>
+			<<<n_blocks, block_size>>>(*this, start, end, results);
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
 
@@ -262,7 +265,7 @@ public:
 	void put_avoid_dups(const KeyIt start, const KeyIt end, ResIt results, bool sync = true) {
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
 		invoke_device<&Cuckoo::coop<&Cuckoo::coop_put<true>, KeyIt, ResIt>>
-			<<<n_blocks, block_size>>>(this, start, end, results);
+			<<<n_blocks, block_size>>>(*this, start, end, results);
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
 
@@ -322,10 +325,10 @@ public:
 		const int n_blocks = (len + block_size - 1) / block_size;
 
 		invoke_device<&Cuckoo::coop_sorted<&Cuckoo::coop_find_as_result, KeyIt, ResIt>>
-			<<<n_blocks, block_size>>>(this, keys, keys + len, results);
+			<<<n_blocks, block_size>>>(*this, keys, keys + len, results);
 
 		invoke_device<&Cuckoo::put_if_not_found_sorted<KeyIt, ResIt>>
-			<<<n_blocks, block_size>>>(this, keys, keys + len, results);
+			<<<n_blocks, block_size>>>(*this, keys, keys + len, results);
 
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
@@ -391,12 +394,9 @@ public:
 	{
 		// make sure row_type is wide enough
 		assert(sizeof(row_type) * 8 >= state_width + rem_width);
-		CUDA(cudaMallocManaged(&rows, n_rows * sizeof(row_type)));
+		_rows = cusp(alloc_man<row_type>(n_rows));
+		rows = _rows.get();
 		clear();
-	}
-
-	~Cuckoo() {
-		CUDA(cudaFree(rows));
 	}
 };
 
@@ -411,18 +411,15 @@ public:
 
 TEST_CASE("Cuckoo hash table") {
 	using Table = Cuckoo<uint32_t, 32>;
-	Table *table;
-	CUDA(cudaMallocManaged(&table, sizeof(*table)));
-	new (table) Table(21, 5); // 32 * 2^5 = 1024 rows
-
-	CHECK(table->count(0) == 0);
+	Table table(21, 5);
+	CHECK(table.count(0) == 0);
 
 	// Check the hashing and inverting
 	// TODO: randomize?
 	const Table::HashKey to_check[] { {0, 42}, {1, 365}, {2, 3'1415} };
 	for (auto [hid, key] : to_check) {
-		auto [a, r] = table->addr_row(hid, key);
-		auto [h, k] = table->hash_key(a, r);
+		auto [a, r] = table.addr_row(hid, key);
+		auto [h, k] = table.hash_key(a, r);
 		CHECK(h == hid);
 		CHECK(k == key);
 	}
@@ -439,11 +436,11 @@ TEST_CASE("Cuckoo hash table") {
 	CUDA(cudaMallocManaged(&results, sizeof(*results) * N));
 	CUDA(cudaMallocManaged(&found, sizeof(*found) * N));
 	thrust::sequence(keys, keys + N);
-	table->put(keys, keys + to_insert, results, false);
-	table->find(keys, keys + N, found);
+	table.put(keys, keys + to_insert, results, false);
+	table.find(keys, keys + N, found);
 	CHECK(thrust::all_of(keys, keys + to_insert,
-		[table, results] (auto key) {
-			return table->count(key) == 1 && results[key] == Result::PUT;
+		[&table, results] (auto key) {
+			return table.count(key) == 1 && results[key] == Result::PUT;
 		}));
 	CHECK(thrust::all_of(found, found + to_insert, thrust::identity<bool>()));
 	CHECK(thrust::none_of(found + to_insert, found + N, thrust::identity<bool>()));
@@ -451,8 +448,6 @@ TEST_CASE("Cuckoo hash table") {
 	CUDA(cudaFree(keys));
 	CUDA(cudaFree(results));
 	CUDA(cudaFree(found));
-	CUDA(cudaFree(table));
-	CHECK(true); // survived destruction
 }
 
 TEST_CASE("Cuckoo: sorted find-or-put") {
@@ -460,6 +455,7 @@ TEST_CASE("Cuckoo: sorted find-or-put") {
 	Table *table;
 	CUDA(cudaMallocManaged(&table, sizeof(*table)));
 	new (table) Table(21, 5); // 32 * 2^5 = 1024 rows
+
 
 	constexpr auto N = 300;
 	constexpr auto step = 30;

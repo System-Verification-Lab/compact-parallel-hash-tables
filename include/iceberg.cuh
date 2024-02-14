@@ -69,7 +69,9 @@ public:
 	//   - state 1 + i indicates hash function i
 	// - the least significant rem_width bits indicate the remainder
 	p_row_type *p_rows;
+	CuSP<p_row_type> _p_rows; // shared pointer handling memory
 	s_row_type *s_rows;
+	CuSP<s_row_type> _s_rows; // shared pointer handling memory
 
 	// Hash key to an address and a row entry
 	__host__ __device__ PAddrRow p_addr_row(const key_type k) {
@@ -229,7 +231,8 @@ public:
 	// To control thread layout, use the find_or_put kernel directly
 	void find_or_put(const key_type *start, const key_type *end, Result *results, bool sync = true) {
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
-		kh::find_or_put<<<n_blocks, block_size>>>(this, start, end, results);
+		invoke_device<&Iceberg::_find_or_put>
+			<<<n_blocks, block_size>>>(*this, start, end, results);
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
 
@@ -265,7 +268,7 @@ public:
 	void find(const KeyIt start, const KeyIt end, BoolIt results, bool sync = true) {
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
 		invoke_device<&Iceberg::coop<&Iceberg::coop_find, KeyIt, BoolIt>>
-			<<<n_blocks, block_size>>>(this, start, end, results);
+			<<<n_blocks, block_size>>>(*this, start, end, results);
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
 
@@ -325,7 +328,7 @@ public:
 	void put(const KeyIt start, const KeyIt end, ResIt results, bool sync = true) {
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
 		invoke_device<&Iceberg::coop<&Iceberg::coop_put, KeyIt, ResIt>>
-			<<<n_blocks, block_size>>>(this, start, end, results);
+			<<<n_blocks, block_size>>>(*this, start, end, results);
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
 
@@ -358,14 +361,11 @@ public:
 		// make sure row_type is wide enough
 		assert(sizeof(p_row_type) * 8 >= p_state_width + p_rem_width);
 		assert(sizeof(s_row_type) * 8 >= s_state_width + s_rem_width);
-		CUDA(cudaMallocManaged(&p_rows, p_n_rows * sizeof(p_row_type)));
-		CUDA(cudaMallocManaged(&s_rows, s_n_rows * sizeof(s_row_type)));
+		_p_rows = cusp(alloc_man<p_row_type>(p_n_rows));
+		p_rows = _p_rows.get();
+		_s_rows = cusp(alloc_man<s_row_type>(s_n_rows));
+		s_rows = _s_rows.get();
 		clear();
-	}
-
-	~Iceberg() {
-		CUDA(cudaFree(p_rows));
-		CUDA(cudaFree(s_rows));
 	}
 };
 
