@@ -60,16 +60,13 @@ using Table = std::conditional_t<spec.type == TableType::ICEBERG,
 	Cuckoo<p_row_t<spec>, spec.p_bucket_size>>;
 
 template <TableSpec spec>
-static Table<spec> *new_table(TableConfig conf) {
+static Table<spec> make_table(TableConfig conf) {
 	using Table = Table<spec>;
-	Table *table;
-	CUDA(cudaMallocManaged(&table, sizeof(*table)));
 	if constexpr (spec.type == TableType::CUCKOO) {
-		new (table) Table(conf.key_width, conf.p_addr_width);
+		return Table(conf.key_width, conf.p_addr_width);
 	} else {
-		new (table) Table(conf.key_width, conf.p_addr_width, conf.s_addr_width);
+		return Table(conf.key_width, conf.p_addr_width, conf.s_addr_width);
 	}
-	return table;
 }
 
 template <TableSpec s>
@@ -79,12 +76,11 @@ FindResult find_runner(TableConfig config, FindBenchmark bench) {
 
 template <TableSpec spec>
 FopResult fop_runner(TableConfig conf, FopBenchmark bench) {
-	using T = Table<spec>;
 	const auto len = bench.keys_end - bench.keys;
 	assert(len % N_STEPS == 0);
 	float times_ms[N_RUNS];
 
-	T *table = new_table<spec>(conf);
+	auto table = make_table<spec>(conf);
 	Result *results;
 	CUDA(cudaMallocManaged(&results, sizeof(*results) * len));
 	key_type *tmp;
@@ -92,14 +88,14 @@ FopResult fop_runner(TableConfig conf, FopBenchmark bench) {
 
 	Timer timer;
 	for (auto i = 0; i < N_RUNS; i++) {
-		table->clear();
+		table.clear();
 
 		timer.start();
 		for (auto n = 0; n < len; n += len / N_STEPS) {
 			if constexpr (spec.type == TableType::CUCKOO) {
-				table->find_or_put(bench.keys, bench.keys + n, tmp, results, false);
+				table.find_or_put(bench.keys, bench.keys + n, tmp, results, false);
 			} else {
-				table->find_or_put(bench.keys, bench.keys + n, results, false);
+				table.find_or_put(bench.keys, bench.keys + n, results, false);
 			}
 		}
 		times_ms[i] = timer.stop();
@@ -110,8 +106,6 @@ FopResult fop_runner(TableConfig conf, FopBenchmark bench) {
 		if (full) return FopResult { {} };
 	}
 
-	table->~T();
-	CUDA(cudaFree(table));
 	CUDA(cudaFree(results));
 	CUDA(cudaFree(tmp));
 
@@ -122,21 +116,20 @@ FopResult fop_runner(TableConfig conf, FopBenchmark bench) {
 
 template <TableSpec spec>
 PutResult put_runner(TableConfig conf, PutBenchmark bench) {
-	using T = Table<spec>;
 	const auto len = bench.keys_end - bench.keys;
 	assert(len % N_STEPS == 0);
 	float times_ms[N_RUNS];
 
-	T *table = new_table<spec>(conf);
+	auto table = make_table<spec>(conf);
 	Result *results;
 	CUDA(cudaMallocManaged(&results, sizeof(*results) * len));
 
 	Timer timer;
 	for (auto i = 0; i < N_RUNS; i++) {
-		table->clear();
+		table.clear();
 
 		timer.start();
-		table->put(bench.keys, bench.keys_end, results, false);
+		table.put(bench.keys, bench.keys_end, results, false);
 		times_ms[i] = timer.stop();
 
 		CUDA(cudaDeviceSynchronize());
@@ -145,8 +138,6 @@ PutResult put_runner(TableConfig conf, PutBenchmark bench) {
 		if (full) return PutResult { {} };
 	}
 
-	table->~T();
-	CUDA(cudaFree(table));
 	CUDA(cudaFree(results));
 
 	return PutResult {
