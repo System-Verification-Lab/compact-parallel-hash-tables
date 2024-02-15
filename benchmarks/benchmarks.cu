@@ -69,9 +69,30 @@ static Table<spec> make_table(TableConfig conf) {
 	}
 }
 
-template <TableSpec s>
-FindResult find_runner(TableConfig config, FindBenchmark bench) {
-	assert(false);
+template <TableSpec spec>
+FindResult find_runner(TableConfig conf, FindBenchmark bench) {
+	auto table = make_table<spec>(conf);
+
+	{ // Pre-fill table, fail if unsuccessful
+		const auto len = bench.put_keys_end - bench.put_keys;
+		auto _results = cusp(alloc_man<Result>(len));
+		auto *results = _results.get();
+		table.put(bench.put_keys, bench.put_keys_end, results);
+		bool full = thrust::find(thrust::device,
+			results, results + len, Result::FULL) != results + len;
+		if (full) return { {} };
+	}
+
+	const auto len = bench.queries_end - bench.queries;
+	auto results = cusp(alloc_man<bool>(len));
+	Timer timer;
+	for (auto i = 0; i < N_RUNS; i++) {
+		if (i == 1) timer.start(); // ignore first measurement
+		table.find(bench.queries, bench.queries_end, results.get(), false);
+	}
+	auto elapsed = timer.stop();
+
+	return { elapsed /  (N_RUNS - 1) };
 }
 
 template <TableSpec spec>
