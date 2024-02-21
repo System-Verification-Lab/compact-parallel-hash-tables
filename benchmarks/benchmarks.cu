@@ -69,6 +69,18 @@ static Table<spec> make_table(TableConfig conf) {
 	}
 }
 
+// Fill table with keys, return true iff successful
+template <typename Table>
+static bool prefill(Table &table, const key_type *start, const key_type *end) {
+	const auto len = end - start;
+	if (len == 0) return true;
+	auto _results = cusp(alloc_dev<Result>(len));
+	auto *results = _results.get();
+	table.put(start, end, results);
+	return thrust::find(thrust::device, results, results + len, Result::FULL)
+		== results + len;
+}
+
 template <TableSpec spec>
 FindResult find_runner(TableConfig conf, FindBenchmark bench) {
 	auto table = make_table<spec>(conf);
@@ -136,14 +148,58 @@ FopResult fop_runner(TableConfig conf, FopBenchmark bench) {
 }
 
 template <TableSpec spec>
+OneFopResult one_fop_runner(TableConfig conf, OneFopBenchmark bench) {
+	auto table = make_table<spec>(conf);
+
+	const auto len = bench.queries_end - bench.queries;
+	float times_ms[N_RUNS];
+	auto _results = cusp(alloc_man<Result>(len));
+	auto *results = _results.get();
+
+	// Cuckoo needs temporary storage
+	CuSP<key_type> _tmp;
+	key_type *tmp;
+	if constexpr (spec.type == TableType::CUCKOO) {
+		_tmp = cusp(alloc_dev<key_type>(len * 2));
+		tmp = _tmp.get();
+	}
+
+	Timer timer;
+	for (auto i = 0; i < N_RUNS; i++) {
+		table.clear();
+		if (!prefill(table, bench.put_keys, bench.put_keys_end)) {
+			return { {} };
+		}
+
+		timer.start();
+		if constexpr (spec.type == TableType::CUCKOO) {
+			table.find_or_put(bench.queries, bench.queries_end,
+					tmp, results, false);
+		} else {
+			table.find_or_put(bench.queries, bench.queries_end,
+					results, false);
+		}
+		times_ms[i] = timer.stop();
+
+		CUDA(cudaDeviceSynchronize());
+		bool full = thrust::find(thrust::device,
+			results, results + len, Result::FULL) != results + len;
+		if (full) return OneFopResult { {} };
+	}
+
+	return OneFopResult {
+		std::accumulate(times_ms + 1, times_ms + N_RUNS, 0.f) / (N_RUNS - 1)
+	};
+}
+
+template <TableSpec spec>
 PutResult put_runner(TableConfig conf, PutBenchmark bench) {
 	const auto len = bench.keys_end - bench.keys;
-	assert(len % N_STEPS == 0);
 	float times_ms[N_RUNS];
 
 	auto table = make_table<spec>(conf);
-	Result *results;
-	CUDA(cudaMallocManaged(&results, sizeof(*results) * len));
+	auto _results = cusp(alloc_dev<Result>(len));
+	auto *results = _results.get();
 
 	Timer timer;
 	for (auto i = 0; i < N_RUNS; i++) {
@@ -159,8 +215,6 @@ PutResult put_runner(TableConfig conf, PutBenchmark bench) {
 		if (full) return PutResult { {} };
 	}
 
-	CUDA(cudaFree(results));
-
 	return PutResult {
 		std::accumulate(times_ms + 1, times_ms + N_RUNS, 0.f) / (N_RUNS - 1)
 	};
@@ -175,6 +229,7 @@ static Runners make_runners() {
 	return Runners {
 		find_runner<spec>,
 		fop_runner<spec>,
+		one_fop_runner<spec>,
 		put_runner<spec>,
 	};
 }

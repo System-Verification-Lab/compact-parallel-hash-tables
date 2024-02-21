@@ -4,6 +4,9 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <thrust/execution_policy.h>
+#include <thrust/for_each.h>
+#include <thrust/iterator/counting_iterator.h>
 #include <vector>
 
 // NOTE: in BGHT (Awad et al.), ratios are varied by varying the table size.
@@ -20,7 +23,7 @@ const auto s_log_rows = 20;
 const size_t n_rows = (1ull << p_log_rows) + (1ull << s_log_rows);
 const size_t n_keys = 0.9 * n_rows;
 const uint8_t key_width = 45;
-const auto fill_ratios = { 0.5, 0.6, 0.7, 0.8, 0.9 };
+const auto fill_ratios = { 0.5, 0.6, 0.7, 0.8, 0.85, 0.9 };
 const auto positive_query_ratios = { 0., 0.5, 0.75, 1.};
 const uint8_t row_widths[] = { 32, 64 };
 
@@ -35,11 +38,11 @@ int main(int argc, char** argv) {
 	std::ifstream input(filename, std::ios::in | std::ios::binary);
 	assert(input);
 
-	std::cerr << "Reading " << n_keys * 2 << " keys of width "
-		<< +key_width << "from " << filename << "..." << std::flush;
-	auto _keys = cusp(alloc_man<key_type>(n_keys * 2));
+	std::cerr << "Reading " << n_rows * 2 << " keys of width "
+		<< +key_width << " from " << filename << "..." << std::flush;
+	auto _keys = cusp(alloc_man<key_type>(n_rows * 2));
 	auto *keys = _keys.get();
-	assert(input.read((char*)keys, n_keys * sizeof(*keys)));
+	assert(input.read((char*)keys, 2 * n_rows * sizeof(*keys)));
 	std::cerr << "done." << std::endl;
 
 	using Table = std::pair<TableSpec, TableConfig>;
@@ -59,27 +62,85 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	std::cout << "# Iceberg find benchmark" << std::endl;
+	printf("# Iceberg benchmark with %zu rows (2^%d primary, 2^%d secondary)\n",
+		n_rows, +p_log_rows, +s_log_rows);
+	printf("# Keys (expected to be unique) taken from %s\n", filename);
 	// No spaces in header
 	// (some software reads this as column names starting with space)
-	std::cout << "positive_ratio,rw,pbs,sbs";
+	std::cout << "operation,positive_ratio,rw,pbs,sbs";
 	for (auto r : fill_ratios) printf(",%g", r);
 	printf("\n");
 	for (auto [spec, conf] : tables) {
 		auto runners = get_runners(spec);
 
-		for (auto pr : positive_query_ratios) {
-			printf("%4g, %2d, %2d, %2d", pr, spec.p_row_width,
+		auto print_table = [&]() {
+			printf("%2d, %2d, %2d", spec.p_row_width,
 				spec.p_bucket_size, spec.s_bucket_size);
+		};
+
+		// Find
+		// Insert n_rows * fill_ratio in the table,
+		// then query n_rows * fill_ratio * positive_ratio keys
+		// (so the "perfect graph" would be a 1:1 ratio between fill ratio and time
+		for (auto pr : positive_query_ratios) {
+			printf("find,%4g,", pr); print_table();
 			for (auto r : fill_ratios) {
-				const size_t n_insert = n_keys * r;
+				const size_t n_insert = n_rows * r;
 				const size_t start = n_keys - n_insert;
 				const size_t query_start = n_keys - (n_insert * pr);
 				auto findres = runners.find(conf, FindBenchmark {
 					keys + start, keys + n_keys,
 					keys + query_start, keys + query_start + n_insert
 				});
-				printf(", %f", findres.time_ms.value_or(NAN));
+				printf(", %f", findres.average_ms.value_or(NAN));
+			}
+			printf("\n");
+		}
+
+		// Put
+		// Put fill_ratio * n_rows keys in the table
+		printf("put,,"); print_table();
+		for (auto r : fill_ratios) {
+			const size_t n_insert = n_rows * r;
+			auto res = runners.put(conf, PutBenchmark {
+				keys, keys + n_insert
+			});
+			printf(", %f", res.average_ms.value_or(NAN));
+		}
+		printf("\n");
+
+		// TODO: This is still bugged (see br 1)
+		// Let's try to keep the number of inputs constant: n_rows
+		// (this is realistic I think)
+		// First fill table up to before_ratio
+		// Then query n_rows many keys,
+		// so that at the end of the fop, fill_ratio keys are in the table
+		// (fop queries are evenly over already inserted keys and to insert keys)
+		for (auto br : positive_query_ratios) {
+			printf("fop,%g,", br); print_table(); // TODO
+			const size_t n_before = n_rows * br;
+			const auto *before_start = keys + n_rows - n_before;
+			const auto *before_end = keys + n_rows;
+			for (auto fr : fill_ratios) {
+				const size_t n_new = std::max(0., fr - br) * n_rows;
+				const auto *new_start = keys + n_rows;
+
+				auto _to_fop = cusp(alloc_dev<key_type>(n_rows));
+				key_type *tof = _to_fop.get();
+				key_type *tof_end = tof + n_rows;
+				thrust::counting_iterator tofi(0);
+				thrust::for_each_n(thrust::device, tofi, n_rows,
+					[tof, before_start, n_before, n_new]
+					__device__ (auto i) {
+						tof[i] = before_start[i % (n_before + n_new)];
+					});
+
+				auto res = runners.one_fop(conf, OneFopBenchmark {
+					before_start, before_end,
+					tof, tof_end
+
+				});
+				printf(", %f", res.average_ms.value_or(NAN));
 			}
 			printf("\n");
 		}

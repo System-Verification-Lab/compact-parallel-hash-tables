@@ -36,3 +36,10 @@ bench = executable('bench',
 	include_directories: [cpht_inc, benchmarks_inc],
 	dependencies: [argparse, json])
 benchmark('bench', bench)
+
+rates = executable('rates',
+	'benchmarks/rates.cu',
+	'benchmarks/benchmarks.cu',
+	include_directories: [cpht_inc, benchmarks_inc],
+	dependencies: [])
+benchmark('rates', rates)

@@ -31,11 +31,11 @@ struct TableConfig {
 // Find benchmark
 // TODO: we may want to have multiple percentages of hits and misses
 struct FindBenchmark {
-	key_type *put_keys, *put_keys_end;
-	key_type *queries, *queries_end;
+	const key_type *put_keys, *put_keys_end;
+	const key_type *queries, *queries_end;
 };
 struct FindResult {
-	std::optional<float> time_ms;
+	std::optional<float> average_ms;
 };
 
 // Find-or-put benchmark
@@ -45,6 +45,10 @@ struct FopBenchmark {
 struct FopResult {
 	std::optional<float> average_ms;
 };
+
+// Single-run find-or-put benchmark
+using OneFopBenchmark = FindBenchmark;
+using OneFopResult = FopResult;
 
 // Put benchmark
 //
@@ -56,7 +60,8 @@ using PutResult = FopResult;
 using FindRunner = std::function<FindResult(TableConfig, FindBenchmark)>;
 using FopRunner = std::function<FopResult(TableConfig, FopBenchmark)>;
 using PutRunner = std::function<PutResult(TableConfig, PutBenchmark)>;
-struct Runners { FindRunner find; FopRunner fop; PutRunner put; };
+using OneFopRunner = std::function<OneFopResult(TableConfig, OneFopBenchmark)>;
+struct Runners { FindRunner find; FopRunner fop; OneFopRunner one_fop; PutRunner put; };
 
 // Get runners for given table specification
 //
