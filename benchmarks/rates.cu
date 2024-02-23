@@ -19,11 +19,11 @@
 // speaking of tens of millions of keys.
 
 const auto p_log_rows = 26;
-const auto s_log_rows = 20;
+const auto s_log_rows = 23;
 const size_t n_rows = (1ull << p_log_rows) + (1ull << s_log_rows);
 const size_t n_keys = 0.9 * n_rows;
 const uint8_t key_width = 45;
-const auto fill_ratios = { 0.5, 0.6, 0.7, 0.8, 0.85, 0.9 };
+const auto fill_ratios = { 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95 };
 const auto positive_query_ratios = { 0., 0.5, 0.75, 1.};
 const uint8_t row_widths[] = { 32, 64 };
 
@@ -117,7 +117,7 @@ int main(int argc, char** argv) {
 		// so that at the end of the fop, fill_ratio keys are in the table
 		// (fop queries are evenly over already inserted keys and to insert keys)
 		for (auto br : positive_query_ratios) {
-			printf("fop,%g,", br); print_table(); // TODO
+			printf("fop,%4g,", br); print_table(); // TODO
 			const size_t n_before = n_rows * br;
 			const auto *before_start = keys + n_rows - n_before;
 			const auto *before_end = keys + n_rows;
