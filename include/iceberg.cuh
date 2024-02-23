@@ -242,7 +242,11 @@ public:
 		// Primary
 		const auto [a0, r0] = p_addr_row(k);
 		const auto rid = a0 * p_bucket_size + rank;
-		if (tile.any(p_rows[rid] == r0)) return true;
+		const auto row = p_rows[rid];
+		if (tile.any(row == r0)) return true;
+		// Here we use the assumption that no keys are ever (re)moved
+		// (so if we find an empty spot in level 1, we are done)
+		if (tile.any(row == 0)) return false;
 
 		// Secondary level
 		// We divide the tile in two subgroups, inspecting one secondary bucket each
