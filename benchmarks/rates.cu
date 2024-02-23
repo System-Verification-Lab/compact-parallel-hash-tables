@@ -28,11 +28,6 @@ const auto positive_query_ratios = { 0., 0.5, 0.75, 1.};
 const uint8_t row_widths[] = { 32, 64 };
 
 int main(int argc, char** argv) {
-/*	assert(argc == 4);
-	const auto n_keys = std::stoull(argv[1]);
-	const auto n_keys = std::stoull(argv[2]);
-	const auto filename = argv[3];*/
-
 	assert(argc == 2);
 	const auto filename = argv[1];
 	std::ifstream input(filename, std::ios::in | std::ios::binary);
@@ -53,21 +48,25 @@ int main(int argc, char** argv) {
 		const uint8_t s_addr_width = s_log_rows - s_log_bs; 
 		for (auto rw : row_widths) {
 			tables.emplace_back(
-				TableSpec { TableType::ICEBERG, rw,
-					uint8_t(1 << p_log_bs),
-					rw,
-					uint8_t(1 << s_log_bs )},
+				TableSpec { TableType::ICEBERG,
+					rw, uint8_t(1 << p_log_bs),
+					rw, uint8_t(1 << s_log_bs )},
 				TableConfig { key_width, p_addr_width, s_addr_width }
+			);
+			tables.emplace_back(
+				TableSpec { TableType::CUCKOO,
+					rw, uint8_t(1 << p_log_bs) },
+				TableConfig { key_width, p_addr_width }
 			);
 		}
 	}
 
-	printf("# Iceberg benchmark with %zu rows (2^%d primary, 2^%d secondary)\n",
+	printf("# Benchmark with %zu rows (2^%d primary, 2^%d secondary)\n",
 		n_rows, +p_log_rows, +s_log_rows);
 	printf("# Keys (expected to be unique) taken from %s\n", filename);
 	// No spaces in header
 	// (some software reads this as column names starting with space)
-	std::cout << "operation,positive_ratio,rw,pbs,sbs";
+	std::cout << "table,operation,positive_ratio,rw,pbs,sbs";
 	for (auto r : fill_ratios) printf(",%g", r);
 	printf("\n");
 	for (auto [spec, conf] : tables) {
@@ -77,13 +76,15 @@ int main(int argc, char** argv) {
 			printf("%2d, %2d, %2d", spec.p_row_width,
 				spec.p_bucket_size, spec.s_bucket_size);
 		};
+		const auto type_str =
+			spec.type == TableType::ICEBERG ? "iceberg" : "cuckoo";
 
 		// Find
 		// Insert n_rows * fill_ratio in the table,
 		// then query n_rows * fill_ratio * positive_ratio keys
 		// (so the "perfect graph" would be a 1:1 ratio between fill ratio and time
 		for (auto pr : positive_query_ratios) {
-			printf("find,%4g,", pr); print_table();
+			printf("%s,find,%4g,", type_str, pr); print_table();
 			for (auto r : fill_ratios) {
 				const size_t n_insert = n_rows * r;
 				const size_t start = n_keys - n_insert;
@@ -99,7 +100,7 @@ int main(int argc, char** argv) {
 
 		// Put
 		// Put fill_ratio * n_rows keys in the table
-		printf("put,,"); print_table();
+		printf("%s,put,,", type_str); print_table();
 		for (auto r : fill_ratios) {
 			const size_t n_insert = n_rows * r;
 			auto res = runners.put(conf, PutBenchmark {
@@ -109,7 +110,7 @@ int main(int argc, char** argv) {
 		}
 		printf("\n");
 
-		// TODO: This is still bugged (see br 1)
+		// TODO: check this
 		// Let's try to keep the number of inputs constant: n_rows
 		// (this is realistic I think)
 		// First fill table up to before_ratio
@@ -117,7 +118,7 @@ int main(int argc, char** argv) {
 		// so that at the end of the fop, fill_ratio keys are in the table
 		// (fop queries are evenly over already inserted keys and to insert keys)
 		for (auto br : positive_query_ratios) {
-			printf("fop,%4g,", br); print_table(); // TODO
+			printf("%s,fop,%4g,", type_str, br); print_table(); // TODO
 			const size_t n_before = n_rows * br;
 			const auto *before_start = keys + n_rows - n_before;
 			const auto *before_end = keys + n_rows;
