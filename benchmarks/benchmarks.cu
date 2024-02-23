@@ -85,15 +85,7 @@ template <TableSpec spec>
 FindResult find_runner(TableConfig conf, FindBenchmark bench) {
 	auto table = make_table<spec>(conf);
 
-	{ // Pre-fill table, fail if unsuccessful
-		const auto len = bench.put_keys_end - bench.put_keys;
-		auto _results = cusp(alloc_man<Result>(len));
-		auto *results = _results.get();
-		table.put(bench.put_keys, bench.put_keys_end, results);
-		bool full = thrust::find(thrust::device,
-			results, results + len, Result::FULL) != results + len;
-		if (full) return { {} };
-	}
+	if (!prefill(table, bench.put_keys, bench.put_keys_end)) return { {} };
 
 	const auto len = bench.queries_end - bench.queries;
 	auto results = cusp(alloc_man<bool>(len));
