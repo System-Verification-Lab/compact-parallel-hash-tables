@@ -165,8 +165,7 @@ public:
 			const auto [addr, row] = addr_row(hid, k);
 			const auto curr = rows[addr * bucket_size + rank];
 			if (tile.any(curr == row)) return true;
-			const auto load = __popc(tile.ballot(curr != 0));
-			if (load < bucket_size) return false;
+			if (tile.any(curr == 0)) return false;
 		}
 	}
 
