@@ -21,7 +21,6 @@
 const auto p_log_rows = 26;
 const auto s_log_rows = 23;
 const size_t n_rows = (1ull << p_log_rows) + (1ull << s_log_rows);
-const size_t n_keys = 0.9 * n_rows;
 const uint8_t key_width = 45;
 const auto fill_ratios = { 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95 };
 const auto positive_query_ratios = { 0., 0.5, 0.75, 1.};
@@ -81,17 +80,22 @@ int main(int argc, char** argv) {
 
 		// Find
 		// Insert n_rows * fill_ratio in the table,
-		// then query n_rows * fill_ratio * positive_ratio keys
-		// (so the "perfect graph" would be a 1:1 ratio between fill ratio and time
+		// then query n_rows * 0.5 keys with a positive ratio of pr
+		// (keeping the number of queried keys constant allows for
+		// comparing fill ratios)
 		for (auto pr : positive_query_ratios) {
 			printf("%s,find,%4g,", type_str, pr); print_table();
 			for (auto r : fill_ratios) {
+				assert(r >= .5);
+				const size_t n_query = 0.5 * n_rows;
+				const size_t n_positive = n_query * pr;
 				const size_t n_insert = n_rows * r;
-				const size_t start = n_keys - n_insert;
-				const size_t query_start = n_keys - (n_insert * pr);
+				const auto *before_start = keys + n_rows - n_insert;
+				const auto *before_end = before_start + n_insert;
+				const auto *query_start = before_end - n_positive;
 				auto findres = runners.find(conf, FindBenchmark {
-					keys + start, keys + n_keys,
-					keys + query_start, keys + query_start + n_insert
+					before_start, before_end,
+					query_start, query_start + n_query
 				});
 				printf(", %f", findres.average_ms.value_or(NAN));
 			}
@@ -124,8 +128,6 @@ int main(int argc, char** argv) {
 			const auto *before_end = keys + n_rows;
 			for (auto fr : fill_ratios) {
 				const size_t n_new = std::max(0., fr - br) * n_rows;
-				const auto *new_start = keys + n_rows;
-
 				auto _to_fop = cusp(alloc_dev<key_type>(n_rows));
 				key_type *tof = _to_fop.get();
 				key_type *tof_end = tof + n_rows;
