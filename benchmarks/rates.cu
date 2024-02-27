@@ -17,10 +17,14 @@
 // The arithmetic on keys to be inserted based on floating point ratios might
 // be off by one or two keys at times, but this does not matter when we are
 // speaking of tens of millions of keys.
+//
+// We need to be slightly careful with the occupancy calculations: n_rows
+// assumes that there is a backyard, but Cuckoo does not have one
 
-const auto p_log_rows = 26;
-const auto s_log_rows = 23;
-const size_t n_rows = (1ull << p_log_rows) + (1ull << s_log_rows);
+const auto p_log_rows = 27;
+const auto s_log_rows = 24;
+const size_t n_rows_cuckoo = (1ull << p_log_rows);
+const size_t n_rows_iceberg = (1ull << p_log_rows) + (1ull << s_log_rows);
 const uint8_t key_width = 45;
 const auto fill_ratios = { 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95 };
 const auto positive_query_ratios = { 0., 0.5, 0.75, 1.};
@@ -32,11 +36,11 @@ int main(int argc, char** argv) {
 	std::ifstream input(filename, std::ios::in | std::ios::binary);
 	assert(input);
 
-	std::cerr << "Reading " << n_rows * 2 << " keys of width "
+	std::cerr << "Reading " << n_rows_iceberg * 2 << " keys of width "
 		<< +key_width << " from " << filename << "..." << std::flush;
-	auto _keys = cusp(alloc_man<key_type>(n_rows * 2));
+	auto _keys = cusp(alloc_man<key_type>(n_rows_iceberg * 2));
 	auto *keys = _keys.get();
-	assert(input.read((char*)keys, 2 * n_rows * sizeof(*keys)));
+	assert(input.read((char*)keys, 2 * n_rows_iceberg * sizeof(*keys)));
 	std::cerr << "done." << std::endl;
 
 	using Table = std::pair<TableSpec, TableConfig>;
@@ -61,7 +65,7 @@ int main(int argc, char** argv) {
 	}
 
 	printf("# Benchmark with %zu rows (2^%d primary, 2^%d secondary)\n",
-		n_rows, +p_log_rows, +s_log_rows);
+		n_rows_iceberg, +p_log_rows, +s_log_rows);
 	printf("# Keys (expected to be unique) taken from %s\n", filename);
 	// No spaces in header
 	// (some software reads this as column names starting with space)
@@ -69,6 +73,8 @@ int main(int argc, char** argv) {
 	for (auto r : fill_ratios) printf(",%g", r);
 	printf("\n");
 	for (auto [spec, conf] : tables) {
+		const auto n_rows =
+			spec.type == TableType::ICEBERG ? n_rows_iceberg : n_rows_cuckoo;
 		auto runners = get_runners(spec);
 
 		auto print_table = [&]() {
