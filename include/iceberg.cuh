@@ -464,6 +464,27 @@ TEST_CASE("Iceberg: put and find") {
 	CUDA(cudaFree(table));
 }
 
+TEST_CASE("Iceberg: 16-bit") {
+	const auto n = 1000;
+	auto table = Iceberg<uint16_t, 32, uint16_t, 16>(21, 6, 7);
+	auto _keys = cusp(alloc_man<key_type>(n));
+	auto *keys = _keys.get();
+	auto _results = cusp(alloc_man<Result>(n));
+	auto *results = _results.get();
+	auto _found = cusp(alloc_man<bool>(n));
+	auto *found = _found.get();
+	thrust::sequence(keys, keys + n);
+	table.put(keys, keys + n / 2, results);
+	table.find(keys, keys + n, found);
+	CHECK(thrust::all_of(keys, keys + n,
+		[&table, found, results] (auto key) {
+			auto c = table.count(key);
+			return (key < n / 2)
+				? (c == 1 && found[key] && results[key] == Result::PUT)
+				: (c == 0 && !found[key]);
+		}));
+}
+
 // We test level 2 using a small table
 // with 1 primary bucket of size 4 and two secondary of size 2
 // The permutation ensures that all keys hash to both secondary buckets

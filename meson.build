@@ -11,9 +11,13 @@ project(
 	],
 )
 
-add_project_arguments('--std=c++20', language: 'cuda')
-add_project_arguments('--expt-relaxed-constexpr', language: 'cuda')
-add_project_arguments('--extended-lambda', language: 'cuda')
+add_project_arguments(
+	'-arch=sm_75',
+	'--std=c++20',
+	'--expt-relaxed-constexpr',
+	'--extended-lambda',
+	language: 'cuda'
+)
 
 cpht_inc = include_directories('include')
 benchmarks_inc = include_directories('benchmarks')
