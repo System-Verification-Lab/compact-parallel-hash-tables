@@ -185,9 +185,12 @@ public:
 		}
 
 		// Secondary level
-		// We divide the tile in two subgroups, inspecting one secondary bucket each
-		// NOTE: we make the assumption that a thread is in tile rank / (p_bucket_size / 2).
-		// This seems to be the way it works but it's not super well documented.
+		// We divide the tile in two subgroups,
+		// inspecting one secondary bucket each.
+		//
+		// NOTE: we assume that a thread is in tile
+		//	rank / (p_bucket_size / 2).
+		// This seems to be the case, but it isn't well documented.
 		static_assert(s_bucket_size * 2 <= p_bucket_size);
 		const auto subgroup = cg::tiled_partition<p_bucket_size / 2>(tile);
 		const auto hashid = subgroup.meta_group_rank() + 1;
@@ -249,9 +252,7 @@ public:
 		if (tile.any(row == 0)) return false;
 
 		// Secondary level
-		// We divide the tile in two subgroups, inspecting one secondary bucket each
-		// NOTE: we make the assumption that a thread is in tile rank / (p_bucket_size / 2).
-		// This seems to be the way it works but it's not super well documented.
+		// We divide the tile in two groups, inspecting one bucket each
 		static_assert(s_bucket_size * 2 <= p_bucket_size);
 		const auto subgroup = cg::tiled_partition<p_bucket_size / 2>(tile);
 		const auto hashid = subgroup.meta_group_rank() + 1;
@@ -296,9 +297,12 @@ public:
 		}
 
 		// Secondary level
-		// We divide the tile in two subgroups, inspecting one secondary bucket each
-		// NOTE: we make the assumption that a thread is in tile rank / (p_bucket_size / 2).
-		// This seems to be the way it works but it's not super well documented.
+		// We divide the tile in two subgroups,
+		// inspecting one secondary bucket each.
+		//
+		// NOTE: we assume that a thread is in tile
+		//	rank / (p_bucket_size / 2).
+		// This seems to be the case, but it isn't well documented.
 		static_assert(s_bucket_size * 2 <= p_bucket_size);
 		const auto subgroup = cg::tiled_partition<p_bucket_size / 2>(tile);
 		const auto hashid = subgroup.meta_group_rank() + 1;
