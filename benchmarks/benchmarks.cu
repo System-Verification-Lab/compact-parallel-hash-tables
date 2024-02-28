@@ -42,14 +42,20 @@ struct Timer {
 // Runners
 //
 
-template <TableSpec spec>
-requires (spec.p_row_width == 64 || spec.p_row_width == 32)
-using p_row_t = std::conditional<spec.p_row_width == 64, unsigned long long, uint32_t>::type;
+// Row type for given width
+//
+// For convenience, we also support width == 0, which maps to void
+template <uint8_t width>
+requires (width == 64 || width == 32 || width == 16 || width == 0)
+using row_type = std::conditional_t<width == 64, unsigned long long,
+	std::conditional_t<width == 32, uint32_t,
+	std::conditional_t<width == 16, uint16_t, void>>>;
 
 template <TableSpec spec>
-requires (spec.s_row_width == 64 || spec.s_row_width == 32
-	|| (spec.type == TableType::CUCKOO && spec.s_row_width == 0))
-using s_row_t = std::conditional<spec.s_row_width == 64, unsigned long long, uint32_t>::type;
+using p_row_t = row_type<spec.p_row_width>;
+
+template <TableSpec spec>
+using s_row_t = row_type<spec.s_row_width>;
 
 // We use here that the current _implementation_ of std::conditional short
 // circuits on the false path (here: if type is CUCKOO, then we get no Iceberg
@@ -252,6 +258,12 @@ static const std::map<TableSpec, Runners> registry {
 	cuckoo<64,  4>,
 	cuckoo<64,  2>,
 	cuckoo<64,  1>,
+
+	iceberg<16, 32, 16, 16>,
+	iceberg<16, 16, 16,  8>,
+	iceberg<16,  8, 16,  4>,
+	iceberg<16,  4, 16,  2>,
+	iceberg<16,  2, 16,  1>,
 
 	iceberg<32, 32, 32, 16>,
 	iceberg<32, 16, 32,  8>,
