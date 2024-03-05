@@ -7,6 +7,9 @@
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/iterator/counting_iterator.h>
+#include <thrust/logical.h>
+#include <thrust/sort.h>
+#include <thrust/unique.h>
 #include <vector>
 
 // NOTE: in BGHT (Awad et al.), ratios are varied by varying the table size.
@@ -20,28 +23,47 @@
 //
 // We need to be slightly careful with the occupancy calculations: n_rows
 // assumes that there is a backyard, but Cuckoo does not have one
+//
+// NOTE: there is a situation with the 16-bit rows:
+// - only iceberg is supported
+// - the backyard uses 32-bit rows
 
-const auto p_log_rows = 27;
-const auto s_log_rows = 24;
+const auto p_log_rows = 29;
+const auto s_log_rows = p_log_rows - 3;
 const size_t n_rows_cuckoo = (1ull << p_log_rows);
 const size_t n_rows_iceberg = (1ull << p_log_rows) + (1ull << s_log_rows);
-const uint8_t key_width = 45;
+const uint8_t key_width = 39;
 const auto fill_ratios = { 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95 };
 const auto positive_query_ratios = { 0., 0.5, 0.75, 1.};
-const uint8_t row_widths[] = { 32, 64 };
+const uint8_t row_widths[] = { 16, 32, 64 };
 
 int main(int argc, char** argv) {
-	assert(argc == 2);
+	assert(argc >= 2);
 	const auto filename = argv[1];
+	const bool verify = argc > 2 && std::string(argv[2]) == "--verify";
 	std::ifstream input(filename, std::ios::in | std::ios::binary);
 	assert(input);
 
-	std::cerr << "Reading " << n_rows_iceberg * 2 << " keys of width "
+	const auto n_keys = n_rows_iceberg * 2;
+	std::cerr << "Reading " << n_keys << " keys of width "
 		<< +key_width << " from " << filename << "..." << std::flush;
-	auto _keys = cusp(alloc_man<key_type>(n_rows_iceberg * 2));
+	auto _keys = cusp(alloc_man<key_type>(n_keys));
 	auto *keys = _keys.get();
-	assert(input.read((char*)keys, 2 * n_rows_iceberg * sizeof(*keys)));
+	assert(input.read((char*)keys, n_keys * sizeof(*keys)));
 	std::cerr << "done." << std::endl;
+
+	if (verify) {
+		auto _copy = cusp(alloc_man<key_type>(n_keys));
+		auto *copy = _copy.get();
+		thrust::copy(thrust::device, keys, keys + n_keys, copy);
+		thrust::sort(thrust::device, copy, copy + n_keys);
+		auto uend = thrust::unique(thrust::device, copy, copy + n_keys);
+		assert(uend = copy + n_keys);
+		assert(thrust::all_of(thrust::device, keys, keys + n_keys,
+			[keys] __device__ (auto key) {
+				return key < (key_type(1) << key_width);
+			}));
+	}
 
 	using Table = std::pair<TableSpec, TableConfig>;
 	std::vector<Table> tables;
@@ -53,9 +75,12 @@ int main(int argc, char** argv) {
 			tables.emplace_back(
 				TableSpec { TableType::ICEBERG,
 					rw, uint8_t(1 << p_log_bs),
-					rw, uint8_t(1 << s_log_bs )},
+					uint8_t(rw == 16 ? 32 : rw),
+					uint8_t(1 << s_log_bs )},
 				TableConfig { key_width, p_addr_width, s_addr_width }
 			);
+			// Cuckoo does not support small rows
+			if (rw < 32) continue;
 			tables.emplace_back(
 				TableSpec { TableType::CUCKOO,
 					rw, uint8_t(1 << p_log_bs) },
@@ -63,6 +88,7 @@ int main(int argc, char** argv) {
 			);
 		}
 	}
+	for (const auto [s, c] : tables) assert(spec_fits_config(s, c));
 
 	printf("# Benchmark with %zu rows (2^%d primary, 2^%d secondary)\n",
 		n_rows_iceberg, +p_log_rows, +s_log_rows);

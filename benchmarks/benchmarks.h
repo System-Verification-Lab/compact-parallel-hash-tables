@@ -28,6 +28,8 @@ struct TableConfig {
 	uint8_t s_addr_width;
 };
 
+bool spec_fits_config(const TableSpec spec, const TableConfig config);
+
 // Find benchmark
 // TODO: we may want to have multiple percentages of hits and misses
 struct FindBenchmark {

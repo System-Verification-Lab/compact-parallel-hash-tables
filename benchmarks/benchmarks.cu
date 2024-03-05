@@ -6,6 +6,18 @@
 #include <numeric>
 #include <type_traits>
 
+bool spec_fits_config(const TableSpec spec, const TableConfig config) {
+	const auto p_rem_w = config.key_width - config.p_addr_width;
+	const auto s_rem_w = config.key_width - config.s_addr_width;
+
+	if (spec.type == TableType::CUCKOO) {
+		return spec.p_row_width >= 2 + p_rem_w;
+	} else {
+		return (spec.p_row_width >= 1 + p_rem_w)
+			&& (spec.s_row_width >= 2 + s_rem_w);
+	}
+}
+
 // Runs per benchmark. First run is discarded.
 constexpr auto N_RUNS = 10;
 // Steps in fop-benchmark
