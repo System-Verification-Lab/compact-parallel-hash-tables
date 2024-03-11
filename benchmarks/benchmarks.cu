@@ -1,6 +1,7 @@
 #include "cuckoo.cuh"
 #include "iceberg.cuh"
 #include "benchmarks.h"
+#include "timer.h"
 #include <thrust/find.h>
 #include <map>
 #include <numeric>
@@ -22,33 +23,6 @@ bool spec_fits_config(const TableSpec spec, const TableConfig config) {
 constexpr auto N_RUNS = 10;
 // Steps in fop-benchmark
 constexpr auto N_STEPS = 10;
-
-// Wrapper for CUDA GPU timers
-struct Timer {
-	cudaEvent_t before, after;
-	float time;
-
-	inline void start() {
-		cudaEventRecord(before);
-	}
-
-	inline float stop() {
-		cudaEventRecord(after);
-		cudaEventSynchronize(after);
-		cudaEventElapsedTime(&time, before, after);
-		return time;
-	}
-
-	Timer() {
-		cudaEventCreate(&before);
-		cudaEventCreate(&after);
-	}
-
-	~Timer() {
-		cudaEventDestroy(before);
-		cudaEventDestroy(after);
-	}
-};
 
 //
 // Runners
