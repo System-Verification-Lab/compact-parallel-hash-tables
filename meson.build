@@ -47,3 +47,9 @@ rates = executable('rates',
 	include_directories: [cpht_inc, benchmarks_inc],
 	dependencies: [])
 benchmark('rates', rates)
+
+quotient_overhead = executable('quotient_overhead',
+	'benchmarks/quotient_overhead.cu',
+	include_directories: [cpht_inc, benchmarks_inc],
+	dependencies: [])
+benchmark('quotient_overhead', quotient_overhead)
