@@ -3,18 +3,8 @@
 #include <exception>
 #include <random>
 #include <utility>
+#include "types.h"
 #include "bits.h"
-
-// We assume keys are brought in in 64 bits (TODO: template) and addresses are
-// 32 bits. This is a safe choice, since each bucket is usually a cache line,
-// e.g. 128 bytes. (And current GPU memory does not exceed 2^32 * 128 bytes.)
-using key_type = unsigned long long;
-using addr_type = uint32_t;
-
-// WARNING: note that std::function takes BY VALUE, so a generator object
-// should be passed as std::ref(object) most of the time. In the future, this
-// could be an std::function_ref (in C++26 hopefully).
-using Rng = std::function<uint32_t()>;
 
 // Single-round Feistel permutation based on the hash family of BGHT
 // Parameters drawn from generator provided in constructor

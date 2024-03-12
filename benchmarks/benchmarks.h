@@ -1,8 +1,6 @@
 #pragma once
 
-// TODO: should definitely allow for key_type to be set via parameter
-using key_type = unsigned long long;
-
+#include "types.h"
 #include <cstdint>
 #include <functional>
 #include <optional>
