@@ -21,7 +21,7 @@ namespace cg = cooperative_groups;
 template <
 	typename row_type,
 	uint8_t bucket_size,
-	class Permute = BasicPermute,
+	class Permute = RngPermute,
 	uint8_t n_hash_functions = 3
 >
 class Cuckoo {
@@ -385,8 +385,9 @@ public:
 	// keys key_width wide.
 	//
 	// key_width and addr_width to be specified in bits
-	Cuckoo(const uint8_t key_width, const uint8_t addr_width)
-		: permute(key_width)
+	Cuckoo(const uint8_t key_width, const uint8_t addr_width,
+		std::optional<Rng> rng = std::nullopt)
+		: permute(key_width, rng)
 		, addr_width(addr_width)
 		, rem_width(key_width - addr_width)
 		, n_rows((1ull << addr_width) * sizeof(*rows) * bucket_size)

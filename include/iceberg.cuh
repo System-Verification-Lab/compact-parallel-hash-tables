@@ -17,8 +17,9 @@ namespace cg = cooperative_groups;
 // For storing keys of width key_width (in bits).
 // The primary buckets consist of p_bucket_size rows of type p_row_type.
 // The secondary buckets consist of s_bucket_size rows of type s_row_type.
-// Keys are permuted with Permute(key_width)(hash_id, key), and inverted with
-// Permute(key_width).inv(hash_id, permuted_key).
+// The permutation object permute is initialzed as Permute(key_width, rng).
+// Keys are permuted with permute(hash_id, key), and inverted with
+// permute.inv(hash_id, permuted_key).
 //
 // TODO: There is some code duplication between the two levels,
 // which could perhaps be reduced using fancy compile-time abstractions.
@@ -26,7 +27,7 @@ namespace cg = cooperative_groups;
 template <
 	typename p_row_type, uint8_t p_bucket_size,
 	typename s_row_type, uint8_t s_bucket_size,
-	class Permute = BasicPermute
+	class Permute = RngPermute
 >
 class Iceberg {
 	static_assert(p_bucket_size > 0
@@ -347,7 +348,8 @@ public:
 	}
 
 	// Construct an Iceberg hash table with 2^primary_addr_width primary buckets
-	// and 2^secondary_addr_width secondary buckets
+	// and 2^secondary_addr_width secondary buckets. Optionally, the
+	// permutation is initialized with the given RNG.
 	//
 	// It is very important that buckets fit in a single cache line.
 	//
@@ -357,8 +359,9 @@ public:
 	//
 	// Buckets must be aligned to cache lines for efficiency
 	Iceberg(const uint8_t key_width,
-		const uint8_t primary_addr_width, const uint8_t secondary_addr_width)
-		: permute(key_width)
+		const uint8_t primary_addr_width, const uint8_t secondary_addr_width,
+		std::optional<Rng> rng = std::nullopt)
+		: permute(key_width, rng)
 		, p_addr_width(primary_addr_width)
 		, p_rem_width(key_width - p_addr_width)
 		, p_n_rows((1ull << p_addr_width) * sizeof(*p_rows) * p_bucket_size)
@@ -499,7 +502,7 @@ struct SmallPermute {
 		return k ^ 1;
 	}
 
-	SmallPermute(auto) {}
+	SmallPermute(auto, auto) {}
 };
 
 TEST_CASE("Iceberg hash table: level 2 find-or-put") {
