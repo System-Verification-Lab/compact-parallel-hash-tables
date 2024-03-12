@@ -3,6 +3,7 @@
 #include <cassert>
 #include <fstream>
 #include <iostream>
+#include <random>
 #include <string>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
@@ -36,6 +37,15 @@ const uint8_t key_width = 39;
 const auto fill_ratios = { 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95 };
 const auto positive_query_ratios = { 0., 0.5, 0.75, 1.};
 const uint8_t row_widths[] = { 16, 32, 64 };
+// How many times the random values should be shuffled. Note that each
+// individual "measurement" contains many iterations, see benchmarks.cu.
+const auto n_measurements = 10;
+
+// RNG: currently a Mersenne Twister with default parameters (see C++ standard)
+// NOTE: must be passed wrapped in std::ref()
+auto rng_init() {
+	return std::mt19937();
+}
 
 int main(int argc, char** argv) {
 	assert(argc >= 2);
@@ -49,7 +59,10 @@ int main(int argc, char** argv) {
 		<< +key_width << " from " << filename << "..." << std::flush;
 	auto _keys = cusp(alloc_man<key_type>(n_keys));
 	auto *keys = _keys.get();
-	assert(input.read((char*)keys, n_keys * sizeof(*keys)));
+	if (!input.read((char*)keys, n_keys * sizeof(*keys))) {
+		std::cerr << "error!" << std::endl;
+		std::abort();
+	}
 	std::cerr << "done." << std::endl;
 
 	if (verify) {
@@ -115,37 +128,48 @@ int main(int argc, char** argv) {
 		// then query n_rows * 0.5 keys with a positive ratio of pr
 		// (keeping the number of queried keys constant allows for
 		// comparing fill ratios)
-		for (auto pr : positive_query_ratios) {
-			printf("%s,find,%4g,", type_str, pr); print_table();
-			for (auto r : fill_ratios) {
-				assert(r >= .5);
-				const size_t n_query = 0.5 * n_rows;
-				const size_t n_positive = n_query * pr;
-				const size_t n_insert = n_rows * r;
-				const auto *before_start = keys + n_rows - n_insert;
-				const auto *before_end = before_start + n_insert;
-				const auto *query_start = before_end - n_positive;
-				auto findres = runners.find(conf, FindBenchmark {
-					before_start, before_end,
-					query_start, query_start + n_query
-				});
-				printf(", %f", findres.average_ms.value_or(NAN));
+		for (auto i = 0; i < n_measurements; i++) {
+			auto _rng = rng_init();
+			conf.rng = std::ref(_rng);
+			for (auto pr : positive_query_ratios) {
+				printf("%s,find,%4g,", type_str, pr); print_table();
+				for (auto r : fill_ratios) {
+					assert(r >= .5);
+					const size_t n_query = 0.5 * n_rows;
+					const size_t n_positive = n_query * pr;
+					const size_t n_insert = n_rows * r;
+					const auto *before_start = keys + n_rows - n_insert;
+					const auto *before_end = before_start + n_insert;
+					const auto *query_start = before_end - n_positive;
+					auto findres = runners.find(conf, FindBenchmark {
+						before_start, before_end,
+						query_start, query_start + n_query
+					});
+					printf(", %f", findres.average_ms.value_or(NAN));
+				}
+				printf("\n");
 			}
-			printf("\n");
 		}
 
 		// Put
 		// Put fill_ratio * n_rows keys in the table
-		printf("%s,put,,", type_str); print_table();
-		for (auto r : fill_ratios) {
-			const size_t n_insert = n_rows * r;
-			auto res = runners.put(conf, PutBenchmark {
-				keys, keys + n_insert
-			});
-			printf(", %f", res.average_ms.value_or(NAN));
-		}
-		printf("\n");
+		for (auto i = 0; i < n_measurements; i++) {
+			auto _rng = rng_init();
+			conf.rng = std::ref(_rng);
 
+			printf("%s,put,,", type_str); print_table();
+			for (auto r : fill_ratios) {
+				const size_t n_insert = n_rows * r;
+				auto res = runners.put(conf, PutBenchmark {
+					keys, keys + n_insert
+				});
+				printf(", %f", res.average_ms.value_or(NAN));
+			}
+			printf("\n");
+		}
+
+		// Find-or-put
+		//
 		// TODO: check this
 		// Let's try to keep the number of inputs constant: n_rows
 		// (this is realistic I think)
@@ -153,31 +177,35 @@ int main(int argc, char** argv) {
 		// Then query n_rows many keys,
 		// so that at the end of the fop, fill_ratio keys are in the table
 		// (fop queries are evenly over already inserted keys and to insert keys)
-		for (auto br : positive_query_ratios) {
-			printf("%s,fop,%4g,", type_str, br); print_table(); // TODO
-			const size_t n_before = n_rows * br;
-			const auto *before_start = keys + n_rows - n_before;
-			const auto *before_end = keys + n_rows;
-			for (auto fr : fill_ratios) {
-				const size_t n_new = std::max(0., fr - br) * n_rows;
-				auto _to_fop = cusp(alloc_dev<key_type>(n_rows));
-				key_type *tof = _to_fop.get();
-				key_type *tof_end = tof + n_rows;
-				thrust::counting_iterator tofi(0);
-				thrust::for_each_n(thrust::device, tofi, n_rows,
-					[tof, before_start, n_before, n_new]
-					__device__ (auto i) {
-						tof[i] = before_start[i % (n_before + n_new)];
+		for (auto i = 0; i < n_measurements; i++) {
+			auto _rng = rng_init();
+			conf.rng = std::ref(_rng);
+			for (auto br : positive_query_ratios) {
+				printf("%s,fop,%4g,", type_str, br); print_table(); // TODO
+				const size_t n_before = n_rows * br;
+				const auto *before_start = keys + n_rows - n_before;
+				const auto *before_end = keys + n_rows;
+				for (auto fr : fill_ratios) {
+					const size_t n_new = std::max(0., fr - br) * n_rows;
+					auto _to_fop = cusp(alloc_dev<key_type>(n_rows));
+					key_type *tof = _to_fop.get();
+					key_type *tof_end = tof + n_rows;
+					thrust::counting_iterator tofi(0);
+					thrust::for_each_n(thrust::device, tofi, n_rows,
+						[tof, before_start, n_before, n_new]
+						__device__ (auto i) {
+							tof[i] = before_start[i % (n_before + n_new)];
+						});
+
+					auto res = runners.one_fop(conf, OneFopBenchmark {
+						before_start, before_end,
+						tof, tof_end
+
 					});
-
-				auto res = runners.one_fop(conf, OneFopBenchmark {
-					before_start, before_end,
-					tof, tof_end
-
-				});
-				printf(", %f", res.average_ms.value_or(NAN));
+					printf(", %f", res.average_ms.value_or(NAN));
+				}
+				printf("\n");
 			}
-			printf("\n");
 		}
 	}
 }
