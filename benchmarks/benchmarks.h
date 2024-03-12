@@ -24,6 +24,7 @@ struct TableConfig {
 	uint8_t key_width;
 	uint8_t p_addr_width;
 	uint8_t s_addr_width;
+	std::optional<Rng> rng = std::nullopt;
 };
 
 bool spec_fits_config(const TableSpec spec, const TableConfig config);

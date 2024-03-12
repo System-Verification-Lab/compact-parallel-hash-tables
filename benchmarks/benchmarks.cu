@@ -55,9 +55,10 @@ template <TableSpec spec>
 static Table<spec> make_table(TableConfig conf) {
 	using Table = Table<spec>;
 	if constexpr (spec.type == TableType::CUCKOO) {
-		return Table(conf.key_width, conf.p_addr_width);
+		return Table(conf.key_width, conf.p_addr_width, conf.rng);
 	} else {
-		return Table(conf.key_width, conf.p_addr_width, conf.s_addr_width);
+		return Table(conf.key_width, conf.p_addr_width,
+			conf.s_addr_width, conf.rng);
 	}
 }
 
