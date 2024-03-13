@@ -39,12 +39,13 @@ const auto positive_query_ratios = { 0., 0.5, 0.75, 1.};
 const uint8_t row_widths[] = { 16, 32, 64 };
 // How many times the random values should be shuffled. Note that each
 // individual "measurement" contains many iterations, see benchmarks.cu.
-const auto n_measurements = 10;
+const auto n_measurements = 5;
 
-// RNG: currently a Mersenne Twister with default parameters (see C++ standard)
-// NOTE: must be passed wrapped in std::ref()
-auto rng_init() {
-	return std::mt19937();
+// Init RNG for measurement i
+auto rng_init(auto i) {
+	std::mt19937 rng;
+	rng.discard(i * 6); // each measurement uses 6 values
+	return rng;
 }
 
 int main(int argc, char** argv) {
@@ -129,8 +130,7 @@ int main(int argc, char** argv) {
 		// (keeping the number of queried keys constant allows for
 		// comparing fill ratios)
 		for (auto i = 0; i < n_measurements; i++) {
-			auto _rng = rng_init();
-			conf.rng = std::ref(_rng);
+			conf.rng = rng_init(i);
 			for (auto pr : positive_query_ratios) {
 				printf("%s,find,%4g,", type_str, pr); print_table();
 				for (auto r : fill_ratios) {
@@ -154,8 +154,7 @@ int main(int argc, char** argv) {
 		// Put
 		// Put fill_ratio * n_rows keys in the table
 		for (auto i = 0; i < n_measurements; i++) {
-			auto _rng = rng_init();
-			conf.rng = std::ref(_rng);
+			conf.rng = rng_init(i);
 
 			printf("%s,put,,", type_str); print_table();
 			for (auto r : fill_ratios) {
@@ -178,8 +177,7 @@ int main(int argc, char** argv) {
 		// so that at the end of the fop, fill_ratio keys are in the table
 		// (fop queries are evenly over already inserted keys and to insert keys)
 		for (auto i = 0; i < n_measurements; i++) {
-			auto _rng = rng_init();
-			conf.rng = std::ref(_rng);
+			conf.rng = rng_init(i);
 			for (auto br : positive_query_ratios) {
 				printf("%s,fop,%4g,", type_str, br); print_table(); // TODO
 				const size_t n_before = n_rows * br;
