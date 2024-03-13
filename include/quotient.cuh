@@ -16,14 +16,29 @@ class RngPermute {
 	static constexpr uint32_t large_prime = 4294967291ul;
 
 	// Constants (a,b) for our hash functions
-	std::pair<uint32_t, uint32_t>  hash_constants[n_hash_functions];
+	std::pair<uint32_t, uint32_t> hash_constants[n_hash_functions];
 
 	// Hashes x to [0, 2^hash_width) -- so long hash_width < 32
 	// The hash function family from BGHT
+	template <uint8_t index>
+	__host__ __device__ inline uint32_t hash_base(const key_type x) const {
+		const auto [a, b] = hash_constants[index];
+		return (a * x + b) % large_prime % (1ul << hash_width);
+	}
+
+	// Hashes x to [0, 2^hash_width) -- so long hash_width < 32
+	//
+	// NOTE: This jump table improves performance A LOT.
+	// TODO: Figure out why (investigate PTX)
 	__host__ __device__ inline uint32_t hash(const uint8_t index, const key_type x) const {
 		assert(index < n_hash_functions);
-		auto [a, b] = hash_constants[index];
-		return (a * x + b) % large_prime % (1ul << hash_width);
+		switch (index) {
+			case 0: return hash_base<0>(x);
+			case 1: return hash_base<1>(x);
+			case 2: return hash_base<2>(x);
+			// use std::unreachable() in C++23
+			default: __builtin_unreachable();
+		}
 	}
 
 public:
