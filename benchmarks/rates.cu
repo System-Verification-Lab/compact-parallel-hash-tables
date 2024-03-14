@@ -53,7 +53,10 @@ int main(int argc, char** argv) {
 	const auto filename = argv[1];
 	const bool verify = argc > 2 && std::string(argv[2]) == "--verify";
 	std::ifstream input(filename, std::ios::in | std::ios::binary);
-	assert(input);
+	if (!input) {
+		std::cerr << "error opening " << filename << std::endl;
+		std::abort();
+	}
 
 	const auto n_keys = n_rows_iceberg * 2;
 	std::cerr << "Reading " << n_keys << " keys of width "
