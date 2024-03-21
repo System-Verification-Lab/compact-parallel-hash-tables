@@ -41,6 +41,14 @@ bench = executable('bench',
 	dependencies: [argparse, json])
 benchmark('bench', bench)
 
+havi = executable('havi',
+	'benchmarks/havi.cu',
+	'benchmarks/benchmarks.cu',
+	include_directories: [cpht_inc, benchmarks_inc],
+	dependencies: [])
+benchmark('havi', havi)
+
+
 rates = executable('rates',
 	'benchmarks/rates.cu',
 	'benchmarks/benchmarks.cu',
