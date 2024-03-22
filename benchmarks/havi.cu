@@ -6,7 +6,16 @@
 #include <random>
 #include <vector>
 
-const auto filename = "/data/hegemans/havi-log.bin";
+// This is benchmark code for the havi data.
+//
+// This benchmark is based on the code of rates.cu, but there are differences.
+// Here, we measure runtime against processed ratio of input
+// (so _not_ against fill factor), because of the duplicates.
+// There are more duplicates here, this is a much smaller benchmark,
+// and the table does not get _that_ full. That's real-world data for you.
+//
+// To use this for different real-world data sets, vary the n_keys variable.
+
 const uint8_t key_width = 24;
 const auto n_keys = 71053459;
 
@@ -27,7 +36,13 @@ auto rng_init(auto i) {
 	return rng;
 }
 
-int main() {
+int main(int argc, char **argv) {
+	if (argc != 2) {
+		std::cerr << "supply filename of havi data (binary)" << std::endl;
+		std::abort();
+	}
+	const auto filename = argv[1];
+
 	std::ifstream input(filename, std::ios::in | std::ios::binary);
 	if (!input) {
 		std::cerr << "error opening " << filename << std::endl;
