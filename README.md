@@ -9,7 +9,7 @@ As this is a header-only library, it suffices to copy the `include` directory.
 
 ## Usage
 
-## Host-side API
+### Host-side API
 
 The snippet below creates an iceberg table with 16 bit slots in both levels,
 with 2^10 primary buckets of 32 slots, and 2^7 secondary buckets of 16 slots,
@@ -26,7 +26,7 @@ table.find_or_put(keys_start, keys_end, results);
 
 A full example can be found in the `examples` directory.
 
-## Device-side API
+### Device-side API
 
 Some documentation (especially for device-side usage) is provided in the
 comments in `include/cuckoo.cuh` and `include/iceberg.cuh`. The test cases
