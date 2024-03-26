@@ -1,6 +1,5 @@
-# NOTE!!! Currently does not rebuild if headers have changed.
-# The next version of meson should support this.
-# See https://github.com/mesonbuild/meson/issues/11969
+# WARNING: old versions of meson do not properly rebuild the test and benchmark
+# suites when code in header files has changed. Use meson > 1.4.
 
 project(
 	'compact-parallel-hash-tables',
