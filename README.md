@@ -31,8 +31,13 @@ also reports passed tests (useful for debugging).
 ## Benchmarks
 
 The `benchmarks` folder contains code for benchmark executables, as well as
-data generators. Currently very bare-bones: use `generate.py` to generate
-unique keys and write them to a file. Pass the file to the `rates` executable.
+data generators. Edit `generate.py` to generate unique keys and write them to a
+file. Pass the file to the `rates` executable to run the main benchmarks used
+in the paper. See (code) in the `benchmarks` folder for additional benchmarks.
+
+For proper results, configure your meson build folder with `buildtype=release`
+and disable assertions with `ndebug=true` or `ndebug=if-release`. (Assertions
+in GPU code can have noticeable performance impact.)
 
 ## Implementation notes
 
@@ -44,6 +49,8 @@ always a power of 2. This slightly eases the implementation, as the address of
 a key is then the first log N bits of its permutation σ(k), and the remainder
 the other bits. More granular variation of N can be obtained by letting the
 address of k be σ(k) % N and the (unfortunately named) remainder N / σ(k).
+
+The main algorithms are in `include/cuckoo.cuh` and `include/iceberg.cuh`.
 
 ## Acknowledgements
 
