@@ -167,6 +167,7 @@ public:
 			if (tile.any(curr == row)) return true;
 			if (tile.any(curr == 0)) return false;
 		}
+		return false;
 	}
 
 	// Look up given keys in the table
