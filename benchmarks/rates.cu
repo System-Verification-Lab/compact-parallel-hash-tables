@@ -105,7 +105,7 @@ int main(int argc, char** argv) {
 			);
 		}
 	}
-	for (const auto [s, c] : tables) assert(spec_fits_config(s, c));
+	for (const auto &[s, c] : tables) assert(spec_fits_config(s, c));
 
 	printf("# Benchmark with %zu rows (2^%d primary, 2^%d secondary)\n",
 		n_rows_iceberg, +p_log_rows, +s_log_rows);

@@ -21,8 +21,6 @@ const auto n_keys = 71053459;
 
 const auto p_log_rows = 24;
 const auto s_log_rows = p_log_rows - 3;
-const size_t n_rows_cuckoo = (1ull << p_log_rows);
-const size_t n_rows_iceberg = (1ull << p_log_rows) + (1ull << s_log_rows);
 const auto fill_ratios = { 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 1.0 };
 const uint8_t row_widths[] = { 16, 32, 64 };
 // How many times the random values should be shuffled. Note that each
@@ -83,14 +81,14 @@ int main(int argc, char **argv) {
 			);
 		}
 	}
-	for (const auto [s, c] : tables) assert(spec_fits_config(s, c));
+	for (const auto &[s, c] : tables) assert(spec_fits_config(s, c));
 
+	// We use the positive_ratio field to store the processed ratio
+	// (so that we can easily reuse the same analysis code later)
 	std::cout << "table,operation,positive_ratio,rw,pbs,sbs";
 	for (auto r : fill_ratios) printf(",%g", r);
 	printf("\n");
 	for (auto [spec, conf] : tables) {
-		const auto n_rows =
-			spec.type == TableType::ICEBERG ? n_rows_iceberg : n_rows_cuckoo;
 		auto runners = get_runners(spec);
 		auto print_table = [&]() {
 			printf("%2d, %2d, %2d", spec.p_row_width,
