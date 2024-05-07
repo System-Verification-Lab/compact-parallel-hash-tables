@@ -41,10 +41,23 @@ To compile the tests and benchmark suite,
 [install Meson and Ninja](https://mesonbuild.com/Getting-meson.html)
 and setup a build directory using
 ```
-meson setup build -Dbuildtype=debugoptimized -Dwerror=false
+meson setup build -Dbuildtype=debugoptimized
 ```
-In particular, `werror` must be disabled because of some warnings generated in
-CUB. The tests can then be run with
+The project can then be compiled with
+```
+meson compile -C build
+```
+
+For older versions of the CUDA Toolkit, the build may fail because of warnings
+generated in CUB.  The `werror` must then be disabled. This can be done by
+passing -Dwerror=true to the setup command above, or after the fact using
+```
+meson configure build -Dwerror=false
+```
+
+## Tests
+
+The tests can be run with
 ```
 meson test -C build
 ```
@@ -63,9 +76,14 @@ data generators. Edit `generate.py` to generate unique keys and write them to a
 file. Pass the file to the `rates` executable to run the main benchmarks used
 in the paper. See (code) in the `benchmarks` folder for additional benchmarks.
 
-For proper results, configure your meson build folder with `buildtype=release`
-and disable assertions with `ndebug=true` or `ndebug=if-release`. (Assertions
-in GPU code can have noticeable performance impact.)
+For proper results, configure a meson build folder with `buildtype=release`.
+
+```
+meson setup release -Dbuildtype=release
+meson compile -C release
+```
+
+The benchmark executables can then be found in the `release` directory.
 
 ## Implementation notes
 
