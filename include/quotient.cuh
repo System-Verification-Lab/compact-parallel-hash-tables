@@ -1,6 +1,7 @@
 #pragma once
 #include <cassert>
 #include <exception>
+#include <optional>
 #include <random>
 #include <utility>
 #include "types.h"
