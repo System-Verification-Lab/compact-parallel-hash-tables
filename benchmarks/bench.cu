@@ -27,7 +27,7 @@ std::string to_string(TableType type) {
 		case TableType::CUCKOO: return "Cuckoo";
 		case TableType::ICEBERG: return "Iceberg";
 	}
-	assert(false);
+	__builtin_unreachable();
 }
 
 struct TableDesc {
