@@ -34,12 +34,15 @@ therein may be useful examples as well.
 
 ## Build instructions
 
-This project was developed using GCC 10 and CUDA Toolkit 12.
-It uses Thrust and C++20 for convenience/readability. Both could be eliminated.
+This project was developed using GCC 10 and CUDA Toolkit 12, but should also
+work on more recent versions. It uses Thrust (included with the toolkit) and
+C++20 for convenience/readability. Both could be eliminated.
 
-To compile the tests and benchmark suite,
-[install Meson and Ninja](https://mesonbuild.com/Getting-meson.html)
-and setup a build directory using
+To compile the tests and benchmark suite, first make sure that the CUDA Toolkit
+in installed and that the environment is set up [properly][cudaenv] so that, in
+particular, the nvcc compiler is in the PATH.
+Then [install Meson and Ninja](https://mesonbuild.com/Getting-meson.html) and
+setup a build directory using
 ```
 meson setup build -Dbuildtype=debugoptimized
 ```
@@ -48,9 +51,9 @@ The project can then be compiled with
 meson compile -C build
 ```
 
-For older versions of the CUDA Toolkit, the build may fail because of warnings
-generated in CUB.  The `werror` must then be disabled. This can be done by
-passing -Dwerror=true to the setup command above, or after the fact using
+For older versions of the CUDA Toolkit (12.0), the build fails because of
+warnings regarding CUB.  The `werror` flag must then be disabled. This can be
+done by passing `-Dwerror=true` to the setup command above, or afterwards using
 ```
 meson configure build -Dwerror=false
 ```
@@ -133,6 +136,7 @@ In particular, the cooperative-group based approach from [BGHT][] is used,
 and the default key permutation is (a one-round Feistel function) based on the
 hash family in [BGHT][] for comparison purposes.
 
+[cudaenv]: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#environment-setup
 [BGHT]: https://github.com/owensgroup/BGHT
 [CompactCuckoo]: https://github.com/DaanWoltgens/CompactCuckoo
 [doctest]: https://github.com/doctest/doctest
