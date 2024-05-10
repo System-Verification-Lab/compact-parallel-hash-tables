@@ -30,11 +30,6 @@
 // - only iceberg is supported
 // - the backyard uses 32-bit rows
 
-const auto p_log_rows = 29;
-const auto s_log_rows = p_log_rows - 3;
-const size_t n_rows_cuckoo = (1ull << p_log_rows);
-const size_t n_rows_iceberg = (1ull << p_log_rows) + (1ull << s_log_rows);
-const uint8_t key_width = 39;
 const auto fill_ratios = { 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95 };
 const auto positive_query_ratios = { 0., 0.5, 0.75, 1.};
 const uint8_t row_widths[] = { 16, 32, 64 };
@@ -51,18 +46,33 @@ int main(int argc, char** argv) {
 	argparse::ArgumentParser args;
 	args.add_argument("keys")
 		.help("binary file containing unique random keys (uint64_t[])");
+	args.add_argument("--key-width", "-w")
+		.help("width of keys in bits")
+		.default_value(39u)
+		.nargs(1)
+		.scan<'u', unsigned>();
+	args.add_argument("--p-log-entries", "-p")
+		.help("2-log of the number of primary entries")
+		.default_value(29u)
+		.nargs(1)
+		.scan<'u', unsigned>();
+	args.add_argument("--s-log-entries", "-s")
+		.help("2-log of the number of secondary entries [default: p-log-entries - 3]")
+		.nargs(1)
+		.scan<'u', unsigned>();
+	args.add_argument("--measurements", "-n")
+		.help("number of measurements per configuration")
+		.default_value(5u)
+		.nargs(1)
+		.scan<'u', unsigned>();
 	const auto tabletypes = { "cuckoo", "iceberg" };
 	const auto benchmarks = { "find", "fop", "put" };
 	for (auto &t: tabletypes) for (auto &b : benchmarks) {
 		args.add_argument(std::string("--skip-") + t + "-" + b)
 			.flag();
 	}
-	args.add_argument("--measurements")
-		.help("number of measurements per configuration")
-		.scan<'u', unsigned>()
-		.default_value(5u);
 	args.add_argument("--verify")
-		.help("verify uniqueness of keys")
+		.help("verify uniqueness and length of keys")
 		.flag();
 	try {
 		args.parse_args(argc, argv);
@@ -72,6 +82,14 @@ int main(int argc, char** argv) {
 	}
 
 	const auto filename = args.get("keys");
+	const int p_log_rows = args.get<unsigned>("--p-log-entries");
+	const int s_log_rows = [&]() -> int {
+		if (auto slr = args.present<unsigned>("--s-log-entries")) return *slr;
+		else return p_log_rows - 3;
+	}();
+	const size_t n_rows_cuckoo = (1ull << p_log_rows);
+	const size_t n_rows_iceberg = (1ull << p_log_rows) + (1ull << s_log_rows);
+	const uint8_t key_width = args.get<unsigned>("--key-width");
 	// How many times the random values should be shuffled. Note that each
 	// individual "measurement" contains many iterations, see benchmarks.cu.
 	const int n_measurements = args.get<unsigned>("--measurements");
@@ -106,7 +124,7 @@ int main(int argc, char** argv) {
 		auto uend = thrust::unique(thrust::device, copy, copy + n_keys);
 		assert(uend = copy + n_keys);
 		assert(thrust::all_of(thrust::device, keys, keys + n_keys,
-			[keys] __device__ (auto key) {
+			[keys, key_width] __device__ (auto key) {
 				return key < (key_type(1) << key_width);
 			}));
 	}
