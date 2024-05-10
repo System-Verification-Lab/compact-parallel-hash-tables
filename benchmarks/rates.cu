@@ -1,5 +1,6 @@
 #include "benchmarks.h"
 #include "cuda_util.cuh"
+#include <argparse/argparse.hpp>
 #include <cassert>
 #include <fstream>
 #include <iostream>
@@ -37,9 +38,6 @@ const uint8_t key_width = 39;
 const auto fill_ratios = { 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95 };
 const auto positive_query_ratios = { 0., 0.5, 0.75, 1.};
 const uint8_t row_widths[] = { 16, 32, 64 };
-// How many times the random values should be shuffled. Note that each
-// individual "measurement" contains many iterations, see benchmarks.cu.
-const auto n_measurements = 5;
 
 // Init RNG for measurement i
 auto rng_init(auto i) {
@@ -49,15 +47,46 @@ auto rng_init(auto i) {
 }
 
 int main(int argc, char** argv) {
-	assert(argc >= 2);
-	const auto filename = argv[1];
-	const bool verify = argc > 2 && std::string(argv[2]) == "--verify";
+	// Command-line arguments
+	argparse::ArgumentParser args;
+	args.add_argument("keys")
+		.help("binary file containing unique random keys (uint64_t[])");
+	const auto tabletypes = { "cuckoo", "iceberg" };
+	const auto benchmarks = { "find", "fop", "put" };
+	for (auto &t: tabletypes) for (auto &b : benchmarks) {
+		args.add_argument(std::string("--skip-") + t + "-" + b)
+			.flag();
+	}
+	args.add_argument("--measurements")
+		.help("number of measurements per configuration")
+		.scan<'u', unsigned>()
+		.default_value(5u);
+	args.add_argument("--verify")
+		.help("verify uniqueness of keys")
+		.flag();
+	try {
+		args.parse_args(argc, argv);
+	} catch (std::exception &err) {
+		std::cerr << err.what() << std::endl << args;
+		return 1;
+	}
+
+	const auto filename = args.get("keys");
+	// How many times the random values should be shuffled. Note that each
+	// individual "measurement" contains many iterations, see benchmarks.cu.
+	const int n_measurements = args.get<unsigned>("--measurements");
+	const auto verify = args.get<bool>("--verify");
+	// In the future, this could be much nicer with argparse's store_into()
+	auto skip = [&args](auto table, auto bench) -> bool {
+		return args.get<bool>(std::string("--skip-") + table + "-" + bench);
+	};
+
+	// Parse input
 	std::ifstream input(filename, std::ios::in | std::ios::binary);
 	if (!input) {
 		std::cerr << "error opening " << filename << std::endl;
 		std::abort();
 	}
-
 	const auto n_keys = n_rows_iceberg * 2;
 	std::cerr << "Reading " << n_keys << " keys of width "
 		<< +key_width << " from " << filename << "..." << std::flush;
@@ -82,6 +111,7 @@ int main(int argc, char** argv) {
 			}));
 	}
 
+	// Generate table specifications to test
 	using Table = std::pair<TableSpec, TableConfig>;
 	std::vector<Table> tables;
 	for (uint8_t p_log_bs = 3; p_log_bs < 6; p_log_bs++) {
@@ -105,11 +135,15 @@ int main(int argc, char** argv) {
 			);
 		}
 	}
-	for (const auto &[s, c] : tables) assert(spec_fits_config(s, c));
+	for (const auto &[s, c] : tables) if (!spec_fits_config(s, c)) {
+		std::cerr << "table specification does not fit config" << std::endl;
+		std::abort();
+	}
 
 	printf("# Benchmark with %zu rows (2^%d primary, 2^%d secondary)\n",
 		n_rows_iceberg, +p_log_rows, +s_log_rows);
-	printf("# Keys (expected to be unique) taken from %s\n", filename);
+	printf("# Keys (expected to be unique) taken from %s\n",
+		filename.c_str());
 	// No spaces in header
 	// (some software reads this as column names starting with space)
 	std::cout << "table,operation,positive_ratio,rw,pbs,sbs";
@@ -132,6 +166,7 @@ int main(int argc, char** argv) {
 		// then query n_rows * 0.5 keys with a positive ratio of pr
 		// (keeping the number of queried keys constant allows for
 		// comparing fill ratios)
+		if (!skip(type_str, "find"))
 		for (auto i = 0; i < n_measurements; i++) {
 			conf.rng = rng_init(i);
 			for (auto pr : positive_query_ratios) {
@@ -156,6 +191,7 @@ int main(int argc, char** argv) {
 
 		// Put
 		// Put fill_ratio * n_rows keys in the table
+		if (!skip(type_str, "put"))
 		for (auto i = 0; i < n_measurements; i++) {
 			conf.rng = rng_init(i);
 
@@ -179,6 +215,7 @@ int main(int argc, char** argv) {
 		// Then query n_rows many keys,
 		// so that at the end of the fop, fill_ratio keys are in the table
 		// (fop queries are evenly over already inserted keys and to insert keys)
+		if (!skip(type_str, "fop"))
 		for (auto i = 0; i < n_measurements; i++) {
 			conf.rng = rng_init(i);
 			for (auto br : positive_query_ratios) {
