@@ -2,9 +2,11 @@
 #include "cuda_util.cuh"
 #include <argparse/argparse.hpp>
 #include <cassert>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <random>
+#include <stdio.h>
 #include <string>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
@@ -42,6 +44,9 @@ auto rng_init(auto i) {
 }
 
 int main(int argc, char** argv) {
+	// Line-buffer stdout to ease monitoring
+	setvbuf(stdout, nullptr, _IOLBF, 0);
+
 	// Command-line arguments
 	argparse::ArgumentParser args;
 	args.add_argument("keys")
