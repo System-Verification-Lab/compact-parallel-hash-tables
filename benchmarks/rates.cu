@@ -158,10 +158,12 @@ int main(int argc, char** argv) {
 		std::abort();
 	}
 
-	printf("# Benchmark with %zu rows (2^%d primary, 2^%d secondary)\n",
+	printf("## Benchmark with %zu rows (2^%d primary, 2^%d secondary)\n",
 		n_rows_iceberg, +p_log_rows, +s_log_rows);
-	printf("# Keys (expected to be unique) taken from %s\n",
+	printf("## Keys (expected to be unique) taken from %s\n",
 		filename.c_str());
+	printf("# p_log_entries = %d\n# s_log_entries = %d\n###\n",
+		+p_log_rows, +s_log_rows);
 	// No spaces in header
 	// (some software reads this as column names starting with space)
 	std::cout << "table,operation,positive_ratio,rw,pbs,sbs";
