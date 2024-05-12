@@ -20,7 +20,7 @@ bool spec_fits_config(const TableSpec spec, const TableConfig config) {
 }
 
 // Runs per benchmark. First run is discarded.
-constexpr auto N_RUNS = 10;
+constexpr auto N_RUNS = 3;
 // Steps in fop-benchmark
 constexpr auto N_STEPS = 10;
 
