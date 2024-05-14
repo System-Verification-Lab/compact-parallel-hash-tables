@@ -47,7 +47,8 @@ for copying commands or referencing this document from a terminal environment.
 - Python 3 and the ability to create virtual environments (venv / pip)
   - On some systems, the latter may require an extra package
     (`python3-venv` on Ubuntu)
-  - The minimal Python version we tested is 3.7.13
+  - The minimal Python version we tested is 3.7.13, but newer is recommended.
+- For the real-world benchmark, `xz` is required to decompress the data.
 
 The library itself depends only on the CUDA toolkit and can be used by simply
 copying over the files in the `include` directory. Python is required to
@@ -64,8 +65,15 @@ reproduce the figures in the article.
    ```
    This installs specific versions of the Python dependencies for compilation
    (`meson`, `ninja`), and the benchmark data / figure generation (`numpy`,
-   `pandas`, `tomli`, and `matplotlib`) in the local virtual environment. When
-   launching a new shell, the virtual environment should again be activated.
+   `pandas`, `tomli`, and `matplotlib`) in the local virtual environment. If
+   the install command raises an error (which may happen for older Python
+   versions like Python 3.7), a working environment can likely be created with
+   ```
+   pip install meson ninja numpy pandas tomli matplotlib
+   ```
+
+   When launching a new shell, the virtual environment should again be activated.
+
 3. Compile the project in release mode
    ```
    meson setup release --buildtype=release -Dwerror=false
@@ -77,7 +85,7 @@ reproduce the figures in the article.
    JSON here.)
 4. Run the tests with
    ```
-   meson test -C release
+   ./release/tests
    ```
    They should all pass.
 
@@ -110,11 +118,11 @@ script is finished, the `out-SIZE` directory contains pdf files of figures
 corresponding to those in the manuscript.
 
 The tiny benchmark, though not at all representative for a system under load,
-should complete in less than 20 minutes and can be used to verify that
-everything works. The small benchmark can, depending on the GPU, already give
-results in line with those in the manuscript for the find and find-or-put
-loads. To obtain a representative insertion benchmark, a larger benchmark may
-have to be performed.
+should complete in less than an hour (less than 30 minutes on our RTX 4090) and
+can be used to verify that everything works. The small benchmark can, depending
+on the GPU, already give results reasonably in line with those in the
+manuscript for the find and find-or-put loads. To obtain a representative
+insertion benchmark, a larger benchmark has to be performed.
 
 [^benchmarksize]: In particular, the 64-bit tables perform much better under
     lower loads than under high load in the insertion benchmark---though still
@@ -127,7 +135,7 @@ The real-world benchmark that appears in the article can be performed with
 ```
 ./benchmarks/benchmarks.sh havi
 ```
-and should complete in a few minutes. The output can be found in `out-havi`.
+and should complete within 5 minutes. The output can be found in `out-havi`.
 
 The input data is included with the artifact in the file `havi-log.txt.xz`. The
 benchmark script will decompress this and convert it to a binary file
