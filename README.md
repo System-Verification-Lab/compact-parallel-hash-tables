@@ -1,7 +1,9 @@
 # Compact parallel hash tables for the GPU
 
-This project implements compact GPU hash tables. There is currently a bucketed
-cuckoo and a 2-level iceberg table.
+This is a small header-only CUDA C++ library implementing compact GPU hash
+tables. There is currently a bucketed cuckoo and a 2-level iceberg table. More
+information can be found in ARTIFACT.md and the conference paper *Compact
+Parallel Hash Tables on the GPU* to be presented at Euro-Par 2024.
 
 ## Installation
 
