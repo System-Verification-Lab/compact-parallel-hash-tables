@@ -1,10 +1,29 @@
-# Artifact for Euro-Par 2024
+% Compact Parallel Hash Tables on the GPU
+  Overview document
+% Steef Hegeman; Daan Wöltgens; Anton Wijs; Alfons Laarman
+% May 15, 2024
 
-The file README.md contains information about the code as a compact GPU hash
-table library. This file contains the necessary information to verify the
-results in the manuscript.
+This artifact supports the article "Compact Parallel Hash Tables on the GPU",
+to appear in Euro-Par 2024. It consists of a header-only CUDA C++ library for
+compact cuckoo and compact iceberg hash tables, as well as benchmarks.
 
-## Hardware requirements
+The file README.md contains information about the artifact as a compact GPU
+hash table library. There is a minimal example in the `examples` folder for
+host-side use, and the tests and comments included in the header files in
+`include` serve as further documentation.[^tests] The library can be used from
+the host and from the device side.
+
+[^tests]: The `doctest` tests are ignored during normal compilation. They
+    can also be stripped from the headers if desired.
+
+The rest of this document details how to verify the results in the
+aforementioned article, running the benchmarks and generating figures. It is
+also available in plain-text markdown (`ARTIFACT.md`), which might be useful
+for copying commands or referencing this document from a terminal environment.
+
+## Getting Started
+
+### Hardware requirements
 
 - A CUDA GPU with compute capability >= 7.5
   - We verified our results on an RTX 2080 Ti, an RTX 3090, an RTX 4090, and an
@@ -15,17 +34,26 @@ results in the manuscript.
 - Roughly as much RAM as the GPU has memory
 - Roughly as much free storage space as the GPU has memory
 
-## Software requirements
+### Software requirements
 
 - A relatively up-to-date Linux distribution
-  - Windows with WSL may work, but we have not tested this. The instructions are for Linux
 - Version 12 of the CUDA Toolkit, preferably 12.4, and matching drivers
   - The toolkit can be obtained at https://developer.nvidia.com/cuda-toolkit
+  - Newer versions should also work
+  - The library itself depends only on the CUDA Toolkit, and can thus be used
+    in a CUDA project by simply coping the header files in the `include`
+    directory. The additional requirements below are for running the benchmarks
+    and reproducing the figures.
 - Python 3 and the ability to create virtual environments (venv / pip)
-  - On some systems, the latter may require an extra package (e.g. python3-venv on Ubuntu)
+  - On some systems, the latter may require an extra package
+    (`python3-venv` on Ubuntu)
   - The minimal Python version we tested is 3.7.13
 
-## Setting up
+The library itself depends only on the CUDA toolkit and can be used by simply
+copying over the files in the `include` directory. Python is required to
+reproduce the figures in the article.
+
+### Setting up
 
 1. Open a shell at the root directory of the artifact
 2. Create and activate Python virtual environment, and install the dependencies
@@ -34,38 +62,49 @@ results in the manuscript.
    source venv/bin/activate
    pip install -r python-requirements.txt
    ```
-   (this installs specific versions of meson, ninja, numpy, pandas, tomli, and matplotlib)
+   This installs specific versions of the Python dependencies for compilation
+   (`meson`, `ninja`), and the benchmark data / figure generation (`numpy`,
+   `pandas`, `tomli`, and `matplotlib`) in the local virtual environment. When
+   launching a new shell, the virtual environment should again be activated.
 3. Compile the project in release mode
    ```
    meson setup release --buildtype=release -Dwerror=false
    meson compile -C release
    ```
-4. Optionally, the tests can be run with
+   meson will automatically download specific versions of the C++ dependencies:
+   `doctest` for the tests, `argparse` and `nlohmann-json` for command line
+   argument and JSON parsing in the benchmark runners. (Though we will not use
+   JSON here.)
+4. Run the tests with
    ```
    meson test -C release
    ```
    They should all pass.
 
-## Running the benchmarks
+We are now ready to run the benchmarks.
+
+## Step-by-step benchmark instructions
 
 The project contains various benchmark suites, with various configuration
-options. The interested reader may inspect the --help output of
-`release/rates`, `benchmarks/generate.py` and `benchmarks/figures.py`. For
-proper results, parameters need to be chosen so that the benchmark table is
-around a third of the GPU memory. This allows for a large number of keys to be
-inserted during the benchmark, thus measuring performance under load.
+options. The interested reader may inspect the `--help` output of
+`release/rates`, `benchmarks/generate.py` and `benchmarks/figures.py`. **For
+results comparable to those in the article, parameters need to be chosen so
+that the benchmark table is around a third of the GPU memory**. This allows for
+a large number of keys to be inserted during the benchmark, thus measuring
+performance under load.[^benchmarksize]
 
-The script `benchmarks/benchmarks.sh` can be used to perform the benchmarks and
-generate the figures corresponding to the ones in the article manuscript.
+For convenience, the script `benchmarks/benchmarks.sh` can be used to perform
+the benchmarks and generate the figures corresponding to the ones in the
+article manuscript, all at once.
 
-Continuing from the instructions of the previous section, the process can be run with
+The process can be run with
 
 ```
 ./benchmarks/benchmarks.sh SIZE
 ```
 
-where SIZE is one of: tiny, small, normal, large. The small benchmark is
-suitable for GPUs with around 12GB of memory, the normal benchmark for those
+where `SIZE` is one of: `tiny`, `small`, `normal`, `large`. The small benchmark
+is suitable for GPUs with around 12GB of memory, the normal benchmark for those
 with 24GB of memory, and the large one for those with 48GB of memory. After the
 script is finished, the `out` directory contains pdf files of figures
 corresponding to those in the manuscript.
@@ -74,24 +113,27 @@ The tiny benchmark, though not at all representative for a system under load,
 should complete in less than 20 minutes and can be used to verify that
 everything works. The small benchmark can, depending on the GPU, already give
 results in line with those in the manuscript for the find and find-or-put
-loads. To obtain a representative insertion benchmark, a benchmark size close
-to the GPU memory should be performed. (In particular, the 64-bit tables
-perform much better under lower insertion loads than under high load. This will
-be touched upon in the camera-ready manuscript.)
+loads. To obtain a representative insertion benchmark, a larger benchmark may
+have to be performed.
+
+[^benchmarksize]: In particular, the 64-bit tables perform much better under
+    lower loads than under high load in the insertion benchmark---though still
+    significantly less than the compact tables except for under very small
+    loads. This will be touched upon in the camera-ready paper.
 
 ### Real-world (havi) benchmark
 
 TODO: describe the data and how to run it
 
-## Troubleshooting
+## Notes and troubleshooting
 
 ### My GPU has much less than 12GB (or much more than 48GB) of memory
 
 The `benchmarks.sh` script can also be supplied with an integer, in which case
 this will be taken as the logarithm of the number of (primary) entries in the
-benchmark tables. The `normal` 24GB size corresponds to 29, and each step
-roughly halves or doubles the memory used. For GPUs with 6GB of memory one may
-thus use `./benchmarks/benchmarks.sh 27`.
+benchmark tables. The `normal` size for GPUs with 24GB memory corresponds to
+the integer 29, and each step roughly halves or doubles the memory used. For
+GPUs with 6GB of memory one may thus use `./benchmarks/benchmarks.sh 27`.
 
 ### Increasing the precision
 
@@ -119,3 +161,14 @@ can then be performed with
 
 It must be noted however, that similar results will only be obtained on a GPU
 with the same 24GB memory capacity as our RTX 3090.
+
+### The final find-or-put figure is off
+
+In the final find-or-put figures, there are measurements for a
+before-fill-factor of 0.75 and an after-fill-factor of 0.5. In reality, the
+measurement corresponds with a before-fill-factor of 0.75 and an
+after-fill-factor of 0.75 (hence these final figures start with a horizontal
+line, until the measurements where the after-fill-factor is greater than the
+before-fill-factor). This will be fixed for the camera-ready paper (likely by
+removing these confusing measurements from the figure), but for now this
+artifact faithfully reproduces the figures in the accepted manuscript.
