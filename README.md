@@ -26,6 +26,10 @@ table.find_or_put(keys_start, keys_end, results);
 
 A full example can be found in the `examples` directory.
 
+The library contains default permutation functions. It is possible to pass a
+custom permutation function as an extra template argument. See
+`include/iceberg.cuh` and `include/quotient.cuh`.
+
 ### Device-side API
 
 Some documentation (especially for device-side usage) is provided in the
@@ -75,43 +79,7 @@ also reports passed tests (useful for debugging).
 ## Benchmarks
 
 The `benchmarks` folder contains code for benchmark executables, as well as
-data generators.
-
-### Generating test data
-
-Unique random keys required for running the benchmarks, can be generated using
-`generate.py` in the `benchmarks` directory. It can be configured using command
-line arguments. Run `./benchmarks/generate.py --help` for more information.
-
-Generate the default set of 1208 million keys of 39 bits using
-
-```
-./benchmarks/generate.py -o keys.bin
-```
-
-The generated keys file can then be passed to the `rates` executable to run the
-rates benchmark.
-
-### Running the main benchmarks (rates)
-
-For proper results, compile the benchmarks with `buildtype=release`.
-
-```
-meson setup release -Dbuildtype=release
-meson compile -C release
-```
-
-The benchmark executables can now be found in the `release` directory.
-
-The main benchmarks can be run as follows. (With the keys generated as above).
-
-```
-./release/rates keys.bin > rates.csv
-```
-
-#### TODO: Interpreting the results
-
-### TODO: Running the real-world data benchmarks
+data generators. See ARTIFACT.md for more details.
 
 ## Implementation notes
 
