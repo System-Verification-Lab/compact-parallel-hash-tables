@@ -1,9 +1,11 @@
 #include "benchmarks.h"
 #include "cuda_util.cuh"
 #include <cassert>
+#include <cstdio>
 #include <iostream>
 #include <fstream>
 #include <random>
+#include <stdio.h>
 #include <vector>
 
 // This is benchmark code for the havi data.
@@ -35,6 +37,9 @@ auto rng_init(auto i) {
 }
 
 int main(int argc, char **argv) {
+	// Line-buffer stdout to ease monitoring
+	setvbuf(stdout, nullptr, _IOLBF, 0);
+
 	if (argc != 2) {
 		std::cerr << "supply filename of havi data (binary)" << std::endl;
 		std::abort();
