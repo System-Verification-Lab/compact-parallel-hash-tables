@@ -4,8 +4,8 @@
 % May 15, 2024
 
 This artifact supports the article "Compact Parallel Hash Tables on the GPU",
-to appear in Euro-Par 2024. It consists of a header-only CUDA C++ library for
-compact cuckoo and compact iceberg hash tables, as well as benchmarks.
+to appear in Euro-Par 2024. It consists of a basic header-only CUDA C++ library
+for compact cuckoo and compact iceberg hash tables, as well as benchmarks.
 
 The file README.md contains information about the artifact as a compact GPU
 hash table library. There is a minimal example in the `examples` folder for
@@ -106,7 +106,7 @@ The process can be run with
 where `SIZE` is one of: `tiny`, `small`, `normal`, `large`. The small benchmark
 is suitable for GPUs with around 12GB of memory, the normal benchmark for those
 with 24GB of memory, and the large one for those with 48GB of memory. After the
-script is finished, the `out` directory contains pdf files of figures
+script is finished, the `out-SIZE` directory contains pdf files of figures
 corresponding to those in the manuscript.
 
 The tiny benchmark, though not at all representative for a system under load,
@@ -123,7 +123,24 @@ have to be performed.
 
 ### Real-world (havi) benchmark
 
-TODO: describe the data and how to run it
+The real-world benchmark that appears in the article can be performed with
+```
+./benchmarks/benchmarks.sh havi
+```
+and should complete in a few minutes. The output can be found in `out-havi`.
+
+The input data is included with the artifact in the file `havi-log.txt.xz`. The
+benchmark script will decompress this and convert it to a binary file
+`havi.bin` before passing it to the `./release/havi` benchmark runner.
+
+### Reference output
+
+The `reference` directory contains the benchmark data used for the manuscript
+and generated figures for comparison. This data was generated on an RTX 3090
+with 24GB memory with a benchmark setup comparable to the `normal` parameters.
+(See below for a more accurate description.) The host machine has an Intel Xeon
+Silver 4214R processor and 240GB of RAM.
+
 
 ## Notes and troubleshooting
 
@@ -162,7 +179,7 @@ can then be performed with
 It must be noted however, that similar results will only be obtained on a GPU
 with the same 24GB memory capacity as our RTX 3090.
 
-### The final find-or-put figure is off
+### The final find-or-put figure looks off
 
 In the final find-or-put figures, there are measurements for a
 before-fill-factor of 0.75 and an after-fill-factor of 0.5. In reality, the
