@@ -12,7 +12,7 @@ fi
 HAVI=false
 P_LOG_ENTRIES=29
 KEY_WIDTH=39
-N_MEASUREMENTS=5
+N_MEASUREMENTS=3
 OUT="out-$1"
 case $1 in
 	micro)

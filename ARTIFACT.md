@@ -122,7 +122,8 @@ should complete in less than an hour (less than 30 minutes on our RTX 4090) and
 can be used to verify that everything works. The small benchmark can, depending
 on the GPU, already give results reasonably in line with those in the
 manuscript for the find and find-or-put loads. To obtain a representative
-insertion benchmark, a larger benchmark has to be performed.
+insertion benchmark, a larger benchmark has to be performed. The `normal`
+benchmark takes around 6 hours on an RTX 4090.
 
 [^benchmarksize]: In particular, the 64-bit tables perform much better under
     lower loads than under high load in the insertion benchmark---though still
@@ -170,15 +171,17 @@ measurements, but confidence increases with the number of measurements. The
 number of runs per measurement corresponds with running the same setup multiple
 times (of which the first is always discarded as warmup).
 
-The figures in the manuscript were generated on an RTX 3090 with 10
+The figures in the manuscript were generated on an RTX 3090 with 5
 measurements, each measurement consisting of 10 runs per benchmark. A full
-benchmark would take around 24 hours.
+benchmark would take around a day.
 
-For this artifact submission, the number of runs per benchmark is set at 3 to
-reduce the runtime. The `N_STEPS` constant in `benchmarks/benchmarks.cu` can be
-used to control this (and the project needs to be recompiled afterwards with
-`meson compile -C release`). The exact same benchmark as run for the manuscript
-can then be performed with
+For this artifact submission, the number of measurements and runs is set to 3
+to reduce the runtime. The number of measurements can be controlled via the
+`N_MEASUREMENTS` variable in `benchmark/benchmarks.sh` (via a command-line
+argument to the `rates` benchmark runner). The `N_STEPS` constant in
+`benchmarks/benchmarks.cu` can be used to control the number of runs (and the
+project needs to be recompiled afterwards with `meson compile -C release`). The
+exact same benchmark as run for the manuscript can then be performed with
 
 ```
 ./benchmarks/benchmarks.sh manuscript
