@@ -28,14 +28,18 @@ class Style:
         }
 
     def __init__(self, data):
-        plt.rcParams.update({
-            "font.family": "serif",
-            "font.size": 7,
-            "figure.figsize": (self.BODY_WIDTH, self.BODY_WIDTH * 2/3),
-            "figure.titlesize": "large",
-            "figure.labelsize": "large",
-            "text.usetex": True,
-            })
+        try:
+            plt.rcParams.update({
+                "font.family": "serif",
+                "font.size": 7,
+                "figure.figsize": (self.BODY_WIDTH, self.BODY_WIDTH * 2/3),
+                "figure.titlesize": "large",
+                "figure.labelsize": "large",
+                "text.usetex": True,
+                })
+        except KeyError as e:
+            print("Matplotlib style warning: " + str(e))
+            pass  # to gracefully support older versions
 
         def df_tups(df):
             return list(df.itertuples(index=False, name=None))
@@ -70,7 +74,15 @@ def init(f, kind):
     if kind == "rates":
         # Read front matter
         front, csv = s.split("###", maxsplit=1)
-        front = "".join([ ln.removeprefix("#") for ln in front.splitlines(True)])
+
+        # Older Python versions do not support str.removeprefix
+        def removeprefix(s, p):
+            if s.startswith(p):
+                return s[len(p):]
+            else:
+                return s
+
+        front = "".join([ removeprefix(ln, "#") for ln in front.splitlines(True)])
         conf = tomli.loads(front)
     else:
         csv = s
