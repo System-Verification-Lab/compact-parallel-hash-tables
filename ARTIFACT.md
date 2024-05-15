@@ -21,7 +21,7 @@ aforementioned article, running the benchmarks and generating figures. It is
 also available in plain-text markdown (`ARTIFACT.md`), which might be useful
 for copying commands or referencing this document from a terminal environment.
 
-## Getting Started
+## Getting Started Guide
 
 ### Hardware requirements
 
@@ -86,7 +86,9 @@ are for running the benchmarks and producing the figures.
 
 We are now ready to run the benchmarks.
 
-## Running the benchmarks
+## Step-by-step instructions
+
+### Main benchmarks
 
 For convenience, a benchmark suite and figure generation can be performed with
 
@@ -100,7 +102,9 @@ important to choose the right benchmark size for the GPU.[^benchmarksize] The
 `small` benchmark is suitable for GPUs with around 12GB of memory, the `normal`
 benchmark for those with 24GB of memory, and the `large` one for those with
 48GB of memory. The `tiny` benchmark can be used to quickly verify that the
-benchmark process works.
+benchmark process works. The others will take several hours (see below).
+
+#### Results
 
 After the script is finished, the `out-SIZE` directory contains pdf files of
 figures corresponding to those in the manuscript. For comparison, the
@@ -111,7 +115,7 @@ manuscript figures can be found in the `reference` directory.
     less than the compact tables except for under very small loads. This will
     be touched upon in the camera-ready paper.
 
-### Runtime
+#### Runtime
 
 The `tiny` benchmark, though not at all representative for a system under load,
 should complete in less than an hour (less than 30 minutes on our RTX 4090).
@@ -137,7 +141,7 @@ on an RTX 3090 with 24GB memory with a benchmark setup comparable to the
 `normal` parameters. (See below for a more accurate description.) The host
 machine had an Intel Xeon Silver 4214R processor and 240GB of RAM.
 
-## Notes and troubleshooting
+## Research notes and troubleshooting
 
 ### My GPU has much less than 12GB (or much more than 48GB) of memory
 
