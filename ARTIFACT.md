@@ -39,11 +39,6 @@ for copying commands or referencing this document from a terminal environment.
 - A relatively up-to-date Linux distribution
 - Version 12 of the CUDA Toolkit, preferably 12.4, and matching drivers
   - The toolkit can be obtained at https://developer.nvidia.com/cuda-toolkit
-  - Newer versions should also work
-  - The library itself depends only on the CUDA Toolkit, and can thus be used
-    in a CUDA project by simply coping the header files in the `include`
-    directory. The additional requirements below are for running the benchmarks
-    and reproducing the figures.
 - Python 3 and the ability to create virtual environments (venv / pip)
   - On some systems, the latter may require an extra package
     (`python3-venv` on Ubuntu)
@@ -51,8 +46,8 @@ for copying commands or referencing this document from a terminal environment.
 - For the real-world benchmark, `xz` is required to decompress the data.
 
 The library itself depends only on the CUDA toolkit and can be used by simply
-copying over the files in the `include` directory. Python is required to
-reproduce the figures in the article.
+copying over the files in the `include` directory. The additional requirements
+below are for running the benchmarks and producing the figures.
 
 ### Setting up
 
