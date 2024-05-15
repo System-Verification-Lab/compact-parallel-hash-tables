@@ -1,5 +1,5 @@
 % Compact Parallel Hash Tables on the GPU
-  Overview document
+  Artifact Overview
 % Steef Hegeman; Daan Wöltgens; Anton Wijs; Alfons Laarman
 % May 15, 2024
 
@@ -47,12 +47,12 @@ for copying commands or referencing this document from a terminal environment.
 
 The library itself depends only on the CUDA toolkit and can be used by simply
 copying over the files in the `include` directory. The additional requirements
-below are for running the benchmarks and producing the figures.
+are for running the benchmarks and producing the figures.
 
 ### Setting up
 
 1. Open a shell at the root directory of the artifact
-2. Create and activate Python virtual environment, and install the dependencies
+2. Create and activate a Python virtual environment, and install dependencies:
    ```
    python3 -m venv venv
    source venv/bin/activate
@@ -86,44 +86,36 @@ below are for running the benchmarks and producing the figures.
 
 We are now ready to run the benchmarks.
 
-## Step-by-step benchmark instructions
+## Running the benchmarks
 
-The project contains various benchmark suites, with various configuration
-options. The interested reader may inspect the `--help` output of
-`release/rates`, `benchmarks/generate.py` and `benchmarks/figures.py`. **For
-results comparable to those in the article, parameters need to be chosen so
-that the benchmark table is around a third of the GPU memory**. This allows for
-a large number of keys to be inserted during the benchmark, thus measuring
-performance under load.[^benchmarksize]
-
-For convenience, the script `benchmarks/benchmarks.sh` can be used to perform
-the benchmarks and generate the figures corresponding to the ones in the
-article manuscript, all at once.
-
-The process can be run with
+For convenience, a benchmark suite and figure generation can be performed with
 
 ```
 ./benchmarks/benchmarks.sh SIZE
 ```
 
-where `SIZE` is one of: `tiny`, `small`, `normal`, `large`. The small benchmark
-is suitable for GPUs with around 12GB of memory, the normal benchmark for those
-with 24GB of memory, and the large one for those with 48GB of memory. After the
-script is finished, the `out-SIZE` directory contains pdf files of figures
-corresponding to those in the manuscript.
+where `SIZE` is one of: `tiny`, `small`, `normal`, `large`. The benchmark
+results will only be representative if the system is put under load, so it is
+important to choose the right benchmark size for the GPU.[^benchmarksize] The
+`small` benchmark is suitable for GPUs with around 12GB of memory, the `normal`
+benchmark for those with 24GB of memory, and the `large` one for those with
+48GB of memory. The `tiny` benchmark can be used to quickly verify that the
+benchmark process works.
 
-The tiny benchmark, though not at all representative for a system under load,
-should complete in less than an hour (less than 30 minutes on our RTX 4090) and
-can be used to verify that everything works. The small benchmark can, depending
-on the GPU, already give results reasonably in line with those in the
-manuscript for the find and find-or-put loads. To obtain a representative
-insertion benchmark, a larger benchmark has to be performed. The `normal`
-benchmark takes around 6 hours on an RTX 4090.
+After the script is finished, the `out-SIZE` directory contains pdf files of
+figures corresponding to those in the manuscript. For comparison, the
+manuscript figures can be found in the `reference` directory.
 
-[^benchmarksize]: In particular, the 64-bit tables perform much better under
-    lower loads than under high load in the insertion benchmark---though still
-    significantly less than the compact tables except for under very small
-    loads. This will be touched upon in the camera-ready paper.
+[^benchmarksize]: The 64-bit tables perform much better under lower loads than
+    under high load in the insertion benchmark---though still significantly
+    less than the compact tables except for under very small loads. This will
+    be touched upon in the camera-ready paper.
+
+### Runtime
+
+The `tiny` benchmark, though not at all representative for a system under load,
+should complete in less than an hour (less than 30 minutes on our RTX 4090).
+The `normal` benchmark takes around 6 hours on an RTX 4090.
 
 ### Real-world (havi) benchmark
 
@@ -139,12 +131,11 @@ benchmark script will decompress this and convert it to a binary file
 
 ### Reference output
 
-The `reference` directory contains the benchmark data used for the manuscript
-and generated figures for comparison. This data was generated on an RTX 3090
-with 24GB memory with a benchmark setup comparable to the `normal` parameters.
-(See below for a more accurate description.) The host machine has an Intel Xeon
-Silver 4214R processor and 240GB of RAM.
-
+The `reference` directory contains the benchmark results used for the
+manuscript and generated figures for comparison. These results were generated
+on an RTX 3090 with 24GB memory with a benchmark setup comparable to the
+`normal` parameters. (See below for a more accurate description.) The host
+machine had an Intel Xeon Silver 4214R processor and 240GB of RAM.
 
 ## Notes and troubleshooting
 
@@ -155,6 +146,12 @@ this will be taken as the logarithm of the number of (primary) entries in the
 benchmark tables. The `normal` size for GPUs with 24GB memory corresponds to
 the integer 29, and each step roughly halves or doubles the memory used. For
 GPUs with 6GB of memory one may thus use `./benchmarks/benchmarks.sh 27`.
+
+### Fine-grained benchmarks
+
+For further research, it may be useful to run more fine-grained benchmarks.
+The interested reader may inspect the `--help` output of `release/rates`,
+`benchmarks/generate.py` and `benchmarks/figures.py`.
 
 ### Increasing the precision
 
