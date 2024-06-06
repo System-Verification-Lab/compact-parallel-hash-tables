@@ -126,7 +126,7 @@ def fopax(conf, data, table, axs):
         for _, row in d.iterrows():
             times = row[START_DATA:] / 1000 # s
             for j, f in enumerate(conf.fill_ratios):
-                if f < pr - .05:
+                if f < pr:
                     times.iloc[j] = np.NaN
             ln, = axs[i].plot(conf.fill_ratios,
                           conf.entries[table] / times, **conf.style.row(row))
