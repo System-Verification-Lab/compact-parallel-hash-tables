@@ -38,6 +38,13 @@ T *alloc_man(size_t count) {
 	return out;
 }
 
+// Allocate managed (managed = true) or ordinary device memory
+template <typename T>
+T *alloc(size_t count, bool managed) {
+	if (managed) return alloc_man<T>(count);
+	return alloc_dev<T>(count);
+}
+
 // A kernel that calls __device__ function F with given arguments
 //
 // As __global__ functions cannot be member functions and __device__ functions

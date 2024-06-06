@@ -27,7 +27,8 @@ namespace cg = cooperative_groups;
 template <
 	typename p_row_type, uint8_t p_bucket_size,
 	typename s_row_type, uint8_t s_bucket_size,
-	class Permute = RngPermute
+	class Permute = RngPermute,
+	bool unified_memory = false // useful for debugging purposes
 >
 class Iceberg {
 	static_assert(p_bucket_size > 0
@@ -108,8 +109,12 @@ public:
 	}
 
 	// Count the number of occurrences of key k in the table
-	// Unoptimized, for testing only
+	//
+	// Only works from host when unified_memory is used
 	__host__ __device__ unsigned count(const key_type k) {
+#ifndef  __CUDA_ARCH__
+		assert(unified_memory);
+#endif
 		unsigned count = 0;
 
 		// Primary
@@ -372,9 +377,9 @@ public:
 		// make sure row_type is wide enough
 		assert(sizeof(p_row_type) * 8 >= p_state_width + p_rem_width);
 		assert(sizeof(s_row_type) * 8 >= s_state_width + s_rem_width);
-		_p_rows = cusp(alloc_man<p_row_type>(p_n_rows));
+		_p_rows = cusp(alloc<p_row_type>(p_n_rows, unified_memory));
 		p_rows = _p_rows.get();
-		_s_rows = cusp(alloc_man<s_row_type>(s_n_rows));
+		_s_rows = cusp(alloc<s_row_type>(s_n_rows, unified_memory));
 		s_rows = _s_rows.get();
 		clear();
 	}
@@ -389,7 +394,7 @@ using namespace kh;
 
 TEST_CASE("Iceberg hash table") {
 	// TODO 16 bit width only on high CC
-	using Table = Iceberg<uint32_t, 32, uint32_t, 16>;
+	using Table = Iceberg<uint32_t, 32, uint32_t, 16, RngPermute, true>;
 	Table *table;
 	CUDA(cudaMallocManaged(&table, sizeof(*table)));
 	new (table) Table(21, 6, 3);
@@ -429,8 +434,8 @@ TEST_CASE("Iceberg convenience find_or_put member function") {
 	new (table) Table(21, 5, 3);
 
 	table->find_or_put(keys, keys + n, results);
-	CHECK(thrust::all_of(keys, keys + n,
-		[table, results] (auto key) {
+	CHECK(thrust::all_of(thrust::device, keys, keys + n,
+		[table, results] __device__ (auto key) {
 			return table->count(key) == 1 && results[key] == Result::PUT;
 		}));
 
@@ -457,8 +462,8 @@ TEST_CASE("Iceberg: put and find") {
 
 	table->put(keys, keys + n / 2, results);
 	table->find(keys, keys + n, found);
-	CHECK(thrust::all_of(keys, keys + n,
-		[table, found, results] (auto key) {
+	CHECK(thrust::all_of(thrust::device, keys, keys + n,
+		[table, found, results] __device__ (auto key) {
 			auto c = table->count(key);
 			return (key < n / 2)
 				? (c == 1 && found[key] && results[key] == Result::PUT)
@@ -473,7 +478,7 @@ TEST_CASE("Iceberg: put and find") {
 
 TEST_CASE("Iceberg: 16-bit") {
 	const auto n = 1000;
-	auto table = Iceberg<uint16_t, 32, uint16_t, 16>(21, 6, 7);
+	auto table = Iceberg<uint16_t, 32, uint16_t, 16, RngPermute, true>(21, 6, 7);
 	auto _keys = cusp(alloc_man<key_type>(n));
 	auto *keys = _keys.get();
 	auto _results = cusp(alloc_man<Result>(n));
@@ -506,7 +511,7 @@ struct SmallPermute {
 };
 
 TEST_CASE("Iceberg hash table: level 2 find-or-put") {
-	using Table = Iceberg<uint32_t, 4, uint32_t, 2, SmallPermute>;
+	using Table = Iceberg<uint32_t, 4, uint32_t, 2, SmallPermute, true>;
 	Table *table;
 	CHECK(!cudaMallocManaged(&table, sizeof(*table)));
 	new (table) Table(21, 0, 1); // one primary bucket, two secondary

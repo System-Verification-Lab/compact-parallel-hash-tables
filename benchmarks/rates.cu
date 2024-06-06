@@ -113,12 +113,15 @@ int main(int argc, char** argv) {
 	const auto n_keys = n_rows_iceberg * 2;
 	std::cerr << "Reading " << n_keys << " keys of width "
 		<< +key_width << " from " << filename << "..." << std::flush;
-	auto _keys = cusp(alloc_man<key_type>(n_keys));
+	auto _keys = cusp(alloc_dev<key_type>(n_keys));
 	auto *keys = _keys.get();
-	if (!input.read((char*)keys, n_keys * sizeof(*keys))) {
+	key_type *keys_host = new key_type[n_keys];
+	if (!input.read((char*)keys_host, n_keys * sizeof(*keys))) {
 		std::cerr << "error!" << std::endl;
 		std::abort();
 	}
+	cudaMemcpy(keys, keys_host, n_keys * sizeof(*keys), cudaMemcpyHostToDevice);
+	delete[] keys_host;
 	std::cerr << "done." << std::endl;
 
 	if (verify) {

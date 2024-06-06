@@ -22,7 +22,8 @@ template <
 	typename row_type,
 	uint8_t bucket_size,
 	class Permute = RngPermute,
-	uint8_t n_hash_functions = 3
+	uint8_t n_hash_functions = 3,
+	bool unified_memory = false
 >
 class Cuckoo {
 	static_assert(bucket_size > 0, "bucket size must be nonzero");
@@ -74,7 +75,12 @@ public:
 	}
 
 	// Count the number of occurrences of key k in the table
+	//
+	// The host function works only when using unified memory
 	__host__ __device__ unsigned count(const key_type k) {
+#ifndef  __CUDA_ARCH__
+		assert(unified_memory);
+#endif
 		unsigned count = 0;
 		for (auto hid = 0; hid < n_hash_functions; hid++) {
 			const auto [addr, row] = addr_row(hid, k);
@@ -395,7 +401,7 @@ public:
 	{
 		// make sure row_type is wide enough
 		assert(sizeof(row_type) * 8 >= state_width + rem_width);
-		_rows = cusp(alloc_man<row_type>(n_rows));
+		_rows = cusp(alloc<row_type>(n_rows, unified_memory));
 		rows = _rows.get();
 		clear();
 	}
@@ -411,7 +417,7 @@ public:
 #include <thrust/sequence.h>
 
 TEST_CASE("Cuckoo hash table") {
-	using Table = Cuckoo<uint32_t, 32>;
+	using Table = Cuckoo<uint32_t, 32, RngPermute, 3, true>;
 	Table table(21, 5);
 	CHECK(table.count(0) == 0);
 
@@ -470,16 +476,16 @@ TEST_CASE("Cuckoo: sorted find-or-put") {
 
 	for (auto n = 0; n < N; n += step) {
 		table->find_or_put_sorted(keys, keys + n + step, results);
-		CHECK(thrust::all_of(keys, keys + n,
-			[table, results] (auto key) {
+		CHECK(thrust::all_of(thrust::device, keys, keys + n,
+			[table, results] __device__ (auto key) {
 				return table->count(key) == 1 && results[key] == Result::FOUND;
 			}));
-		CHECK(thrust::all_of(keys + n, keys + n + step,
-			[table, results] (auto key) {
+		CHECK(thrust::all_of(thrust::device, keys + n, keys + n + step,
+			[table, results] __device__ (auto key) {
 				return table->count(key) == 1 && results[key] == Result::PUT;
 			}));
-		CHECK(thrust::all_of(keys + n + step, keys + N,
-			[table, results] (auto key) {
+		CHECK(thrust::all_of(thrust::device, keys + n + step, keys + N,
+			[table, results] __device__ (auto key) {
 				return table->count(key) == 0;
 			}));
 	}
@@ -517,8 +523,8 @@ TEST_CASE("Cuckoo: unordered find-or-put") {
 		CHECK(thrust::all_of(results, results + n,
 			[] (auto res) { return res == Result::FOUND; }));
 	}
-	CHECK(thrust::all_of(keys, keys + N,
-		[table] (auto k) { return table->count(k) == 1; }));
+	CHECK(thrust::all_of(thrust::device, keys, keys + N,
+		[table] __device__ (auto k) { return table->count(k) == 1; }));
 
 	// Now overflow the table
 	thrust::sequence(keys, keys + M);
