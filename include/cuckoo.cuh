@@ -186,9 +186,10 @@ public:
 	}
 
 	// Attempt to find given keys in the table
-	void find(const key_type *start, const key_type *end, bool *results, bool sync = true) {
+	template <class KeyIt, class BoolIt>
+	void find(const KeyIt start, const KeyIt end, BoolIt results, bool sync = true) {
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
-		invoke_device<&Cuckoo::_find>
+		invoke_device<&Cuckoo::coop<&Cuckoo::coop_find, KeyIt, BoolIt>>
 			<<<n_blocks, block_size>>>(*this, start, end, results);
 
 		if (sync) CUDA(cudaDeviceSynchronize());
@@ -256,10 +257,11 @@ public:
 	}
 
 	// Attempt to put given keys in the table
-	void put(const key_type *start, const key_type *end, Result *results, bool sync = true) {
+	template <class KeyIt, class ResIt>
+	void put(const KeyIt start, const KeyIt end, ResIt results, bool sync = true) {
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
 		// calls _put
-		invoke_device<&Cuckoo::_put>
+		invoke_device<&Cuckoo::coop<&Cuckoo::coop_put<false>, KeyIt, ResIt>>
 			<<<n_blocks, block_size>>>(*this, start, end, results);
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
