@@ -3,6 +3,7 @@
 #include "benchmarks.h"
 #include "timer.h"
 #include <thrust/find.h>
+#include <thrust/iterator/constant_iterator.h>
 #include <map>
 #include <numeric>
 #include <type_traits>
@@ -23,6 +24,53 @@ bool spec_fits_config(const TableSpec spec, const TableConfig config) {
 constexpr auto N_RUNS = 3;
 // Steps in fop-benchmark
 constexpr auto N_STEPS = 10;
+
+// For ignoring find results without incurring bandwidth
+// This is basically the implementation of std::ignore (not guaranteed by spec)
+// We currently do not use this, as BGHT does not either
+struct Ignorer {
+	template <typename T>
+	constexpr void operator=(T&&) const noexcept {}
+};
+
+// Only keeps track of whether failure occured, thus saving bandwidth
+__device__ struct FailFlag {
+	bool failed = false;
+
+	__device__ void operator=(const Result& result) noexcept {
+		if (!failed && result == Result::FULL) {
+			failed = true;
+		}
+	}
+} FAILFLAG;
+
+// This can be used as a dummy Result iterator for storing results
+// It only keeps track of whether any thread failed using FailFlag
+// It does not have much of a runtime impact, but does save space
+//
+// Do note the use of the global device variable FAILFLAG. This would be unsafe
+// to use in multithreaded / mutli-stream scenarios! But we do not use this.
+// TODO: modify API so that there is only a read-and-reset function to avoid
+// pitfalls where one might use an unresetted ignorer.
+struct SuccessIgnorer {
+	__device__ FailFlag& operator[](size_t) {
+		return FAILFLAG;
+	}
+
+	bool failed() {
+		bool tmp;
+		CUDA(cudaMemcpyFromSymbol(&tmp, FAILFLAG.failed, sizeof(tmp)));
+		return tmp;
+	}
+
+	void reset(bool to = false) {
+		CUDA(cudaMemcpyToSymbol(FAILFLAG.failed, &to, sizeof(to)));
+	}
+
+	SuccessIgnorer() {
+		reset();
+	}
+};
 
 //
 // Runners
@@ -67,11 +115,11 @@ template <typename Table>
 static bool prefill(Table &table, const key_type *start, const key_type *end) {
 	const auto len = end - start;
 	if (len == 0) return true;
-	auto _results = cusp(alloc_dev<Result>(len));
-	auto *results = _results.get();
-	table.put(start, end, results);
-	return thrust::find(thrust::device, results, results + len, Result::FULL)
-		== results + len;
+	SuccessIgnorer ignore_results;
+	table.put(start, end, ignore_results);
+	bool success = !ignore_results.failed();
+	ignore_results.reset();
+	return success;
 }
 
 template <TableSpec spec>
@@ -81,17 +129,22 @@ FindResult find_runner(TableConfig conf, FindBenchmark bench) {
 	if (!prefill(table, bench.put_keys, bench.put_keys_end)) return { {} };
 
 	const auto len = bench.queries_end - bench.queries;
-	auto results = cusp(alloc_dev<bool>(len));
+	auto _results = cusp(alloc_dev<bool>(len));
+	auto results = _results.get();
+	// Save bandwidth using result = thrust::constant_iterator<Ignorer> result_ignorer;
+
 	Timer timer;
 	for (auto i = 0; i < N_RUNS; i++) {
 		if (i == 1) timer.start(); // ignore first measurement
-		table.find(bench.queries, bench.queries_end, results.get(), false);
+		table.find(bench.queries, bench.queries_end, results, false);
 	}
 	auto elapsed = timer.stop();
 
 	return { elapsed /  (N_RUNS - 1) };
 }
 
+// This is currently unused and has probably acquired bit rot.
+// The rates benchmark uses one_fop_runner
 template <TableSpec spec>
 FopResult fop_runner(TableConfig conf, FopBenchmark bench) {
 	const auto len = bench.keys_end - bench.keys;
@@ -138,15 +191,23 @@ OneFopResult one_fop_runner(TableConfig conf, OneFopBenchmark bench) {
 
 	const auto len = bench.queries_end - bench.queries;
 	float times_ms[N_RUNS];
-	auto _results = cusp(alloc_dev<Result>(len));
-	auto *results = _results.get();
 
-	// Cuckoo needs temporary storage
+	// Cuckoo needs temporary storage and real result storage
+	// (We cannot use SuccessIgnorer for Cuckoo, as the result array is
+	// used for temporary storage in Cuckoo find-or-put). This is slightly
+	// unfair for cuckoo, but on the other hand, the allocation time of
+	// temporaries is not measured so Cuckoo gets a larger advantage there
 	CuSP<key_type> _tmp;
 	key_type *tmp;
+	CuSP<Result> _cuckoo_results;
+	Result *cuckoo_results;
+	SuccessIgnorer iceberg_ignore_results;
 	if constexpr (spec.type == TableType::CUCKOO) {
 		_tmp = cusp(alloc_dev<key_type>(len * 2));
 		tmp = _tmp.get();
+
+		_cuckoo_results = cusp(alloc_dev<Result>(len));
+		cuckoo_results = _cuckoo_results.get();
 	}
 
 	Timer timer;
@@ -155,20 +216,25 @@ OneFopResult one_fop_runner(TableConfig conf, OneFopBenchmark bench) {
 		if (!prefill(table, bench.put_keys, bench.put_keys_end)) {
 			return { {} };
 		}
+		iceberg_ignore_results.reset();
 
 		timer.start();
 		if constexpr (spec.type == TableType::CUCKOO) {
 			table.find_or_put(bench.queries, bench.queries_end,
-					tmp, results, false);
+					tmp, cuckoo_results, false);
 		} else {
 			table.find_or_put(bench.queries, bench.queries_end,
-					results, false);
+					iceberg_ignore_results, false);
 		}
 		times_ms[i] = timer.stop();
 
 		CUDA(cudaDeviceSynchronize());
-		bool full = thrust::find(thrust::device,
-			results, results + len, Result::FULL) != results + len;
+		bool full = iceberg_ignore_results.failed();
+		if constexpr (spec.type == TableType::CUCKOO) {
+			full = thrust::find(thrust::device,
+					cuckoo_results, cuckoo_results + len,
+					Result::FULL) != cuckoo_results + len;
+		}
 		if (full) return OneFopResult { {} };
 	}
 
@@ -179,25 +245,31 @@ OneFopResult one_fop_runner(TableConfig conf, OneFopBenchmark bench) {
 
 template <TableSpec spec>
 PutResult put_runner(TableConfig conf, PutBenchmark bench) {
-	const auto len = bench.keys_end - bench.keys;
 	float times_ms[N_RUNS];
 
 	auto table = make_table<spec>(conf);
-	auto _results = cusp(alloc_dev<Result>(len));
-	auto *results = _results.get();
+
+	SuccessIgnorer results;
+	// If you want to store all return values instead:
+	//const auto len = bench.keys_end - bench.keys;
+	//auto _results = cusp(alloc_dev<Result>(len));
+	//auto *results = _results.get();
 
 	Timer timer;
 	for (auto i = 0; i < N_RUNS; i++) {
 		table.clear();
+		results.reset();
 
 		timer.start();
 		table.put(bench.keys, bench.keys_end, results, false);
 		times_ms[i] = timer.stop();
 
 		CUDA(cudaDeviceSynchronize());
-		bool full = thrust::find(thrust::device,
-			results, results + len, Result::FULL) != results + len;
-		if (full) return PutResult { {} };
+		// When storing all return values:
+		//bool full = thrust::find(thrust::device,
+		//	results, results + len, Result::FULL) != results + len;
+		//if (full) return PutResult { {} };
+		if (results.failed()) return PutResult { {} };
 	}
 
 	return PutResult {

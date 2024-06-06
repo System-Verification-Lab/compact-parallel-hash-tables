@@ -238,9 +238,10 @@ public:
 	// If sync is true (by default, it is), a cuda device synchronization is performed
 	//
 	// To control thread layout, use the find_or_put kernel directly
-	void find_or_put(const key_type *start, const key_type *end, Result *results, bool sync = true) {
+	template <class KeyIt, class ResIt>
+	void find_or_put(const KeyIt start, const KeyIt end, ResIt results, bool sync = true) {
 		const int n_blocks = ((end - start) + block_size - 1) / block_size;
-		invoke_device<&Iceberg::_find_or_put>
+		invoke_device<&Iceberg::coop<&Iceberg::coop_find_or_put, KeyIt, ResIt>>
 			<<<n_blocks, block_size>>>(*this, start, end, results);
 		if (sync) CUDA(cudaDeviceSynchronize());
 	}
