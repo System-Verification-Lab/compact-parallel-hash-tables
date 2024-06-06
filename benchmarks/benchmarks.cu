@@ -81,7 +81,7 @@ FindResult find_runner(TableConfig conf, FindBenchmark bench) {
 	if (!prefill(table, bench.put_keys, bench.put_keys_end)) return { {} };
 
 	const auto len = bench.queries_end - bench.queries;
-	auto results = cusp(alloc_man<bool>(len));
+	auto results = cusp(alloc_dev<bool>(len));
 	Timer timer;
 	for (auto i = 0; i < N_RUNS; i++) {
 		if (i == 1) timer.start(); // ignore first measurement
@@ -138,7 +138,7 @@ OneFopResult one_fop_runner(TableConfig conf, OneFopBenchmark bench) {
 
 	const auto len = bench.queries_end - bench.queries;
 	float times_ms[N_RUNS];
-	auto _results = cusp(alloc_man<Result>(len));
+	auto _results = cusp(alloc_dev<Result>(len));
 	auto *results = _results.get();
 
 	// Cuckoo needs temporary storage
