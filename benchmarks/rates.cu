@@ -45,7 +45,7 @@ auto rng_init(auto i) {
 
 int main(int argc, char** argv) {
 	// Line-buffer stdout to ease monitoring
-	setvbuf(stdout, nullptr, _IOLBF, 0);
+	setvbuf(stdout, nullptr, _IONBF, 0);
 
 	// Command-line arguments
 	argparse::ArgumentParser args;
