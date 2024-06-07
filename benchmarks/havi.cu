@@ -23,11 +23,11 @@ const auto n_keys = 71053459;
 
 const auto p_log_rows = 24;
 const auto s_log_rows = p_log_rows - 3;
-const auto fill_ratios = { 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 1.0 };
+const auto fill_ratios = { 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0 };
 const uint8_t row_widths[] = { 16, 32, 64 };
 // How many times the random values should be shuffled. Note that each
 // individual "measurement" contains many iterations, see benchmarks.cu.
-const auto n_measurements = 5;
+const auto n_measurements = 10;
 
 // Init RNG for measurement i
 auto rng_init(auto i) {
@@ -54,14 +54,16 @@ int main(int argc, char **argv) {
 
 	std::cerr << "Reading " << n_keys << " keys of width "
 		<< +key_width << " from " << filename << "..." << std::flush;
-	auto _keys = cusp(alloc_man<key_type>(n_keys));
+	auto _keys = cusp(alloc_dev<key_type>(n_keys));
 	auto *keys = _keys.get();
-	if (!input.read((char*)keys, n_keys * sizeof(*keys))) {
+	key_type *keys_host = new key_type[n_keys];
+	if (!input.read((char*)keys_host, n_keys * sizeof(*keys))) {
 		std::cerr << "error!" << std::endl;
 		std::abort();
 	}
+	cudaMemcpy(keys, keys_host, n_keys * sizeof(*keys), cudaMemcpyHostToDevice);
+	delete[] keys_host;
 	std::cerr << "done." << std::endl;
-
 
 	using Table = std::pair<TableSpec, TableConfig>;
 	std::vector<Table> tables;
