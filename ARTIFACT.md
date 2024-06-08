@@ -174,17 +174,15 @@ benchmark would take around a day.
 For this artifact submission, the number of measurements and runs is set to 3
 to reduce the runtime. The number of measurements can be controlled via the
 `N_MEASUREMENTS` variable in `benchmark/benchmarks.sh` (via a command-line
-argument to the `rates` benchmark runner). The `N_STEPS` constant in
+argument to the `rates` benchmark runner). The `N_RUNS` constant in
 `benchmarks/benchmarks.cu` can be used to control the number of runs (and the
-project needs to be recompiled afterwards with `meson compile -C release`). The
-exact same benchmark as run for the manuscript can then be performed with
+project needs to be recompiled afterwards with `meson compile -C release`).
+With `N_RUNS` set to 6, the exact same benchmark as run on our RTX 4090 for the
+manuscript can then be performed with
 
 ```
 ./benchmarks/benchmarks.sh manuscript
 ```
-
-It must be noted however, that similar results will only be obtained on a GPU
-with the same 24GB memory capacity as our RTX 3090.
 
 ### The final find-or-put figure looks off
 
