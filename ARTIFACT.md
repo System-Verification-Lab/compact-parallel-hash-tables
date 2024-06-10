@@ -26,8 +26,8 @@ for copying commands or referencing this document from a terminal environment.
 ### Hardware requirements
 
 - A CUDA GPU with compute capability >= 7.5
-  - We verified our results on an RTX 2080 Ti, an RTX 3090, an RTX 4090, and an
-    NVIDIA L40s. The figures in the manuscript were generated on the RTX 4090.
+  - The figures in the manuscript were generated on the RTX 4090. We have found
+    comparable results on the RTX 2080 Ti, RTX 3090, RTX 4090, and NVIDIA L40s.
   - Some results are only achieved at high load. For this reason, benchmarks
     can be completed faster on GPUs with smaller memory. (For verification, a
     high-end GPU such as the L40s may thus not be desirable.)
