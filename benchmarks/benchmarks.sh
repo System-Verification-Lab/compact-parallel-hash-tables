@@ -10,34 +10,39 @@ if [ $# -lt 1 ] || [ $0 = "-h" ] || [ $0 = "--help" ]; then
 fi
 
 HAVI=false
-P_LOG_ENTRIES=29
-KEY_WIDTH=39
-N_MEASUREMENTS=3
+P_LOG_ENTRIES=27
+KEY_WIDTH=37
+N_MEASUREMENTS=5
 OUT="out-$1"
 case $1 in
 	micro)
+		P_LOG_ENTRIES=22
+		KEY_WIDTH=32
+		N_MEASUREMENTS=1
+		;;
+
+	tiny)
 		P_LOG_ENTRIES=25
 		KEY_WIDTH=35
 		N_MEASUREMENTS=1
 		;;
-	tiny)
-		P_LOG_ENTRIES=27
-		KEY_WIDTH=37
-		N_MEASUREMENTS=1
-		;;
 	small)
-		P_LOG_ENTRIES=28
-		KEY_WIDTH=38
+		P_LOG_ENTRIES=26
+		KEY_WIDTH=36
 		N_MEASUREMENTS=2
 		;;
+
 	normal)
-		P_LOG_ENTRIES=29
+		P_LOG_ENTRIES=27
+		KEY_WIDTH=37
 		;;
 	large)
-		P_LOG_ENTRIES=30
+		P_LOG_ENTRIES=28
+		KEY_WIDTH=38
 		;;
 	manuscript)
-		P_LOG_ENTRIES=29
+		P_LOG_ENTRIES=27
+		KEY_WIDTH=37
 		N_MEASUREMENTS=10
 		;;
 	havi)
@@ -45,6 +50,7 @@ case $1 in
 		;;
 	*)
 		P_LOG_ENTRIES=$1
+		KEY_WIDTH=$(($P_LOG_ENTRIES - 10))
 		;;
 esac
 
