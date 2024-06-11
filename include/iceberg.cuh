@@ -178,7 +178,7 @@ public:
 		auto [a0, r0] = p_addr_row(k);
 		while (true) {
 			const auto rid = a0 * p_bucket_size + rank;
-			auto v = p_rows[rid];
+			auto v = volatile_load(p_rows + rid);
 			if (tile.any(v == r0)) return FOUND;
 
 			const auto load = __popc(tile.ballot(v != 0));
@@ -207,7 +207,7 @@ public:
 		while (true) {
 			// Inspect buckets
 			s_row_type v;
-			if (to_act) v = s_rows[a1 * s_bucket_size + subrank];
+			if (to_act) v = volatile_load(s_rows + a1 * s_bucket_size + subrank);
 			const bool found = (v == r1) && to_act;
 			if (tile.any(found)) return FOUND;
 
@@ -221,7 +221,7 @@ public:
 			// This is where we use the assumption on partition tiling.
 			const auto leader = (load1 >= load2) * p_bucket_size / 2;
 			if (rank == leader) {
-				v = atomicCAS(s_rows + a1 * s_bucket_size + load, 0, r1);
+				v = atomicCAS((s_row_type*)s_rows + a1 * s_bucket_size + load, 0, r1);
 			}
 			if (tile.shfl(v, leader) == 0) return PUT;
 		}
@@ -293,7 +293,7 @@ public:
 		auto [a0, r0] = p_addr_row(k);
 		while (true) {
 			const auto rid = a0 * p_bucket_size + rank;
-			auto v = p_rows[rid];
+			auto v = volatile_load(p_rows + rid);
 			const auto load = __popc(tile.ballot(v != 0));
 			if (load == p_bucket_size) break; // to secondary
 
@@ -320,7 +320,7 @@ public:
 		while (true) {
 			// Inspect buckets
 			s_row_type v;
-			if (to_act) v = s_rows[a1 * s_bucket_size + subrank];
+			if (to_act) v = volatile_load(s_rows + a1 * s_bucket_size + subrank);
 
 			// Compare loads
 			const auto load = __popc(subgroup.ballot((v != 0) && to_act));

@@ -4,6 +4,7 @@
 #include <cuda_runtime.h>
 #include <functional>
 #include <memory>
+#include <type_traits>
 
 inline void cuda_assert(cudaError_t code, const char *file, const int line) {
 	if (code == cudaSuccess) return;
@@ -52,4 +53,17 @@ T *alloc(size_t count, bool managed) {
 template <auto F, class... Args>
 __global__ void invoke_device(Args... args) {
 	std::invoke(F, args...);
+}
+
+// Volatile load
+//
+// This can be used to load up-to-date values for variables that have been
+// modified using atomic operations. (CUDA does not guarantee that normal reads
+// following atomic operations are current, they could come from local cache.)
+//
+// Based on http://wg21.link/P1382R0
+template <typename T>
+__host__ __device__ constexpr inline T volatile_load(const T *from)
+requires std::is_trivially_copyable_v<T> {
+	return *(volatile const T*)from;
 }
