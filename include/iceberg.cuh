@@ -180,7 +180,7 @@ public:
 		p_row_type v = 0;
 		while (true) {
 			const auto rid = a0 * p_bucket_size + rank;
-			if (v == 0) v = p_rows[rid];
+			if (v == 0) v = volatile_load(p_rows + rid);
 			if (tile.any(v == r0)) return FOUND;
 
 			const auto load = __popc(tile.ballot(v != 0));
@@ -210,7 +210,7 @@ public:
 		s_row_type v = 0;
 		while (true) {
 			// Inspect buckets
-			if (to_act && v == 0) v = s_rows[a1 * s_bucket_size + subrank];
+			if (to_act && v == 0) v = volatile_load(s_rows + a1 * s_bucket_size + subrank);
 			const bool found = (v == r1) && to_act;
 			if (tile.any(found)) return FOUND;
 
@@ -298,7 +298,7 @@ public:
 		p_row_type v = 0;
 		while (true) {
 			const auto rid = a0 * p_bucket_size + rank;
-			if (v == 0) v = p_rows[rid];
+			if (v == 0) v = volatile_load(p_rows + rid);
 			const auto load = __popc(tile.ballot(v != 0));
 			if (load == p_bucket_size) break; // to secondary
 
@@ -326,7 +326,7 @@ public:
 		s_row_type v = 0;
 		while (true) {
 			// Inspect buckets
-			if (to_act && v == 0) v = s_rows[a1 * s_bucket_size + subrank];
+			if (to_act && v == 0) v = volatile_load(s_rows + a1 * s_bucket_size + subrank);
 
 			// Compare loads
 			const auto load = __popc(subgroup.ballot((v != 0) && to_act));
