@@ -175,10 +175,12 @@ public:
 		const auto rank = tile.thread_rank();
 
 		// Primary
+		{
 		auto [a0, r0] = p_addr_row(k);
+		p_row_type v = 0;
 		while (true) {
 			const auto rid = a0 * p_bucket_size + rank;
-			auto v = volatile_load(p_rows + rid);
+			if (v == 0) v = p_rows[rid];
 			if (tile.any(v == r0)) return FOUND;
 
 			const auto load = __popc(tile.ballot(v != 0));
@@ -188,6 +190,7 @@ public:
 				v = atomicCAS(p_rows + a0 * p_bucket_size + load, p_row_type(0), r0);
 			}
 			if (tile.shfl(v, load) == 0) return PUT;
+		}
 		}
 
 		// Secondary level
@@ -204,10 +207,10 @@ public:
 		const bool to_act = subrank < s_bucket_size;
 
 		const auto [a1, r1] = s_addr_row(hashid, k);
+		s_row_type v = 0;
 		while (true) {
 			// Inspect buckets
-			s_row_type v;
-			if (to_act) v = volatile_load(s_rows + a1 * s_bucket_size + subrank);
+			if (to_act && v == 0) v = s_rows[a1 * s_bucket_size + subrank];
 			const bool found = (v == r1) && to_act;
 			if (tile.any(found)) return FOUND;
 
@@ -219,9 +222,9 @@ public:
 
 			// Insert in least full bucket (when tied, in the second)
 			// This is where we use the assumption on partition tiling.
-			const auto leader = (load1 >= load2) * p_bucket_size / 2;
+			const auto leader = load1 < load2 ? load1 : p_bucket_size / 2 + load2;
 			if (rank == leader) {
-				v = atomicCAS((s_row_type*)s_rows + a1 * s_bucket_size + load, 0, r1);
+				v = atomicCAS(s_rows + a1 * s_bucket_size + load, 0, r1);
 			}
 			if (tile.shfl(v, leader) == 0) return PUT;
 		}
@@ -290,10 +293,12 @@ public:
 		const auto rank = tile.thread_rank();
 
 		// Primary
+		{
 		auto [a0, r0] = p_addr_row(k);
+		p_row_type v = 0;
 		while (true) {
 			const auto rid = a0 * p_bucket_size + rank;
-			auto v = volatile_load(p_rows + rid);
+			if (v == 0) v = p_rows[rid];
 			const auto load = __popc(tile.ballot(v != 0));
 			if (load == p_bucket_size) break; // to secondary
 
@@ -301,6 +306,7 @@ public:
 				v = atomicCAS(p_rows + a0 * p_bucket_size + load, p_row_type(0), r0);
 			}
 			if (tile.shfl(v, load) == 0) return PUT;
+		}
 		}
 
 		// Secondary level
@@ -317,10 +323,10 @@ public:
 		const bool to_act = subrank < s_bucket_size;
 
 		const auto [a1, r1] = s_addr_row(hashid, k);
+		s_row_type v = 0;
 		while (true) {
 			// Inspect buckets
-			s_row_type v;
-			if (to_act) v = volatile_load(s_rows + a1 * s_bucket_size + subrank);
+			if (to_act && v == 0) v = s_rows[a1 * s_bucket_size + subrank];
 
 			// Compare loads
 			const auto load = __popc(subgroup.ballot((v != 0) && to_act));
@@ -330,7 +336,7 @@ public:
 
 			// Insert in least full bucket (when tied, in the second)
 			// This is where we use the assumption on partition tiling.
-			const auto leader = (load1 >= load2) * p_bucket_size / 2;
+			const auto leader = load1 < load2 ? load1 : p_bucket_size / 2 + load2;
 			if (rank == leader) {
 				v = atomicCAS(s_rows + a1 * s_bucket_size + load, 0, r1);
 			}
