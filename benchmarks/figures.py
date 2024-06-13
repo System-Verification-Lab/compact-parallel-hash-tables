@@ -214,7 +214,7 @@ def fopfig_havi(conf, data):
     ax["C"].set_title("Cuckoo")
     haviax(conf, data, "iceberg", ax["I"])
     ax["I"].set_title("Iceberg")
-    fig.supylabel("Throughput (key/s)")
+    fig.supylabel("Find-or-puts (key/s)")
     fig.supxlabel("Processed ratio", x=0.3)
     for a in ax.values():
         a.ticklabel_format(axis="y", scilimits = (9,9))
