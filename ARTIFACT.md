@@ -147,7 +147,7 @@ The `benchmarks.sh` script can also be supplied with an integer, in which case
 this will be taken as the logarithm of the number of (primary) entries in the
 benchmark tables. The `normal` size for GPUs with 24GB memory corresponds to
 the integer 27, and each step roughly halves or doubles the memory used. For
-GPUs with 6GB of memory one may thus use `./benchmarks/benchmarks.sh 25`.
+GPUs with 6GB of memory one may try `./benchmarks/benchmarks.sh 25`.
 
 ### Fine-grained benchmarks
 
