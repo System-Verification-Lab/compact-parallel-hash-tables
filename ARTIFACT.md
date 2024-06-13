@@ -28,7 +28,7 @@ for copying commands or referencing this document from a terminal environment.
 - A recent CUDA GPU with compute capability >= 7.5
   - The figures in the manuscript were generated on the RTX 4090. We have found
     comparable results on the RTX 3090 and NVIDIA L40s, but not on the older
-    RTX 2080 Ti.
+    RTX 2080 Ti (where compactness gives only a slight performance benefit.)
   - Some results are only achieved at high load. For this reason, benchmarks
     can be completed faster on GPUs with smaller memory. (For verification, a
     high-end GPU such as the L40s may thus not be desirable.)
@@ -166,17 +166,14 @@ number of runs per measurement corresponds with running the same setup multiple
 times (of which the first is always discarded as warmup).
 
 The figures in the manuscript were generated on an RTX 4090 with 10
-measurements, each measurement consisting of 6 runs per benchmark. A full
-benchmark would take hours.
+measurements, each measurement consisting of 3 runs per benchmark.
 
-For this artifact submission, the number of measurements and runs is set to 3
-to reduce the runtime. The number of measurements can be controlled via the
-`N_MEASUREMENTS` variable in `benchmark/benchmarks.sh` (via a command-line
-argument to the `rates` benchmark runner). The `N_RUNS` constant in
-`benchmarks/benchmarks.cu` can be used to control the number of runs (and the
-project needs to be recompiled afterwards with `meson compile -C release`).
-With `N_RUNS` set to 6, the exact same benchmark as run on our RTX 4090 for the
-manuscript can then be performed with
+The number of measurements can be controlled via the `N_MEASUREMENTS` variable
+in `benchmark/benchmarks.sh` (via a command-line argument to the `rates`
+benchmark runner). The `N_RUNS` constant in `benchmarks/benchmarks.cu` can be
+used to control the number of runs (and the project needs to be recompiled
+afterwards with `meson compile -C release`). The exact same benchmark as run on
+our RTX 4090 for the manuscript can be performed with
 
 ```
 ./benchmarks/benchmarks.sh manuscript
